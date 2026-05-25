@@ -6,7 +6,7 @@
 The purpose of `mysim` is to build a highly decoupled financial simulation model that projects a single individual's financial situation across a multi-decade lifecycle. The simulation operates strictly on a **macro, discrete annual loop** (Year N calculates Year N+1). Mid-year, month-based, or day-based granularities are out of scope. The primary design goal is mathematical correctness, architectural modularity via plugins, and a strict decoupling of business logic from any presentational layers.
 
 #### 1.1 Deterministic Execution
-The simulation engine must produce byte-identical outputs for identical configuration inputs and engine versions. No implicit wall-clock time, locale, or non-seeded randomness may affect calculations. This ensures reproducibility for regression testing, scenario comparison, and result caching.
+The simulation engine must produce numerically identical structured outputs (or deterministic normalized outputs) for identical configuration inputs and engine versions. No implicit wall-clock time, locale, or non-seeded randomness may affect calculations. This ensures reproducibility for regression testing, scenario comparison, and result caching.
 
 #### 1.2 Time Semantics
 The simulation operates on a yearly basis, but ordering within the year is critical:
@@ -18,6 +18,12 @@ The simulation operates on a yearly basis, but ordering within the year is criti
 #### 1.3 Non-Goals & Disclaimers
 * **Professional Advice:** The simulation provides planning-oriented approximations and does **not** constitute legal, tax, or financial advice.
 * **Real-world Accuracy:** While aiming for correctness, the model simplifies certain real-world complexities to maintain its macro-level scope.
+
+#### 1.4 Intended Abstraction Level
+The `mysim` engine is primarily intended as a **retirement planning approximation** tool. While the architecture is designed to support the precision required for a tax-accurate simulation engine, the current model prioritizes macro-level trajectory forecasting over transaction-level ledger accuracy.
+
+#### 1.5 Future Extensions
+Probabilistic or stochastic simulation modes (e.g., Monte Carlo runs, sequence-of-return risk modeling) are considered future extensions and are not part of the initial deterministic baseline engine.
 
 ---
 
@@ -31,11 +37,13 @@ The simulation operates on a yearly basis, but ordering within the year is criti
     * **Presentation Layer:** All text labels, financial line-item descriptions, and table headers generated for export or user display must be strictly in **German**.
 * **Numerical Precision:** All monetary calculations must use fixed-point decimal arithmetic (`Decimal`) rather than binary floating point. Internal precision must be maintained at a higher level than display precision. The standard rounding method is `ROUND_HALF_UP`.
 * **Versioning Strategy:** The system must implement schema versioning for configurations and tax rule sets. A migration strategy must be defined to ensure backward compatibility as the engine and rule sets evolve.
+* **Currency Semantics:** The engine assumes a single-currency environment (defaulting to EUR). Multi-currency support and FX-rate modeling are intentionally excluded from the current architectural scope.
 
 ---
 
 ### 3. Architecture & Plugin-Driven Topology
 The architecture consists of a country-agnostic **Core Simulation Engine** that handles time-stepping and orchestration, and an **Event-Driven Hook System** where plugins inject country-specific or scenario-specific financial calculations.
+* **Separation of Engine & Rules:** The core engine must contain zero country-specific constants. All regulatory parameters and tax rules must be externalized via plugins or configuration sets.
 * **Data Transparency Rule:** All plugins have open read-only access to all active values within the model state during execution.
 * **Plugin Isolation Rules:** Plugins must interact with state via an explicit mutation API or domain ownership registry. Modifying attributes outside a plugin's specific domain is strictly prohibited to prevent tight coupling and debugging difficulties.
 
@@ -43,10 +51,13 @@ The architecture consists of a country-agnostic **Core Simulation Engine** that 
 Events scheduled for the same year execute deterministically in declaration order unless explicit plugin priorities override this behavior. The engine ensures a stable and predictable execution sequence for all concurrent event hooks.
 
 #### Validation Layer
-The engine must include a validation layer that fails fast on:
+The engine must include a validation layer implementing a **"Fail Loudly and Early"** philosophy. The system must abort execution immediately upon detecting:
 * **Invalid State Transitions:** e.g., impossible age jumps or inconsistent account totals.
 * **Invariant Violations:** e.g., violation of the cost basis + growth = total rule.
 * **Plugin Output Validation:** Ensuring plugin results conform to expected schemas and financial boundaries.
+* **Unknown Event Types:** Detection of undefined or unrecognized events in the configuration.
+* **Rounding Mismatches:** Significant discrepancies during invariant checks caused by rounding errors.
+* **Configuration Gaps:** Missing mandatory plugin fields or configuration parameters.
 
 #### The Annual Lifecycle Pipeline (Hooks Sequence)
 For every year in the simulation timeline, the Core Engine executes the following pipeline hooks in sequential order:
@@ -100,6 +111,19 @@ The engine must handle edge-case financial states:
 * **Negative Capital:** Define whether negative balances are allowed (as debt) or if they mark the scenario as invalid/insolvent.
 * **Insolvency:** If liquidity is insufficient to cover mandatory outflows/deductions, the engine must trigger a configurable policy (e.g., stop simulation, mark scenario as failed).
 
+#### 4.3 Economic, Cash, and Tax Ledger Views
+To simplify future complexity, the engine formalizes the separation between different financial perspectives, even if implemented as internal views:
+* **Economic Ledger:** Tracks theoretical growth and value appreciation regardless of realization.
+* **Cash Ledger:** Tracks actual movement of liquid funds (inflows, outflows, and net results).
+* **Taxable Ledger:** Tracks realized gains and other taxable events that trigger regulatory deductions.
+
+#### 4.4 Asset Lot Modeling (Future Scaling)
+While aggregate tracking of `capital_cost_basis` and `capital_growth_accumulated` is sufficient for high-level approximations, accurate FIFO taxation (especially with multiple buy points, partial sales, or different asset classes) will eventually require a transition to **tax lot modeling**. Future iterations of the model should support individual lots containing:
+* `acquisition_year`: The year of purchase.
+* `principal`: The cost basis for the specific lot.
+* `growth`: The accumulated growth for the specific lot.
+* `asset_class`: The classification (e.g., *Aktienfonds*) for specific tax treatment.
+
 ---
 
 ### 5. Specialized Plugin Logic Requirements (Germany Spec)
@@ -120,6 +144,8 @@ This blueprint details how the parameters and dynamic override sequences pass pa
 
 ```yaml
 # Configuration File Blueprint for "mysim"
+schema_version: 1
+engine_version: "0.1"
 
 simulation:
   birth_year: 1974
