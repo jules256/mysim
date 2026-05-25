@@ -31,12 +31,14 @@ Probabilistic or stochastic simulation modes (e.g., Monte Carlo runs, sequence-o
 * **Language & Runtime:** Python 3.11 as an absolute minimal baseline version.
 * **Target Environment:** Linux, specifically targeting Debian Trixie for development.
 * **Security & Multi-Tenancy:** Out of scope. No user management, authentication, authorization, or network-level security models are required for the core model and initial UI iterations.
-* **Performance Requirements:** Non-critical. The engine processes a single user's scenario sequence linearly; high-throughput concurrent parallel processing is not a requirement.
+* **Performance Requirements:** Non-critical. The engine processes a single user's scenario sequence linearly; high-throughput concurrent parallel processing is not a requirement. A simulation of 50 years with 10 accounts and 5 plugins must complete in <1 second on a modern CPU.
 * **Localization Matrix:**
     * **Codebase Layer:** All variables, architectural patterns, schemas, class names, function names, and comments must be strictly in **English**.
     * **Presentation Layer:** All text labels, financial line-item descriptions, and table headers generated for export or user display must be strictly in **German**.
 * **Numerical Precision:** All monetary calculations must use fixed-point decimal arithmetic (`Decimal`) rather than binary floating point. Internal precision must be maintained at a higher level than display precision. The standard rounding method is `ROUND_HALF_UP`.
 * **Versioning Strategy:** The system must implement schema versioning for configurations and tax rule sets. A migration strategy must be defined to ensure backward compatibility as the engine and rule sets evolve.
+    * **Backward-compatible changes:** Auto-migrate (e.g., new optional fields).
+    * **Breaking changes:** Require explicit `schema_version` bump + migration script (e.g., `schema_version: 2` if `capital_growth_rate` now mandatory).
 * **Currency Semantics:** The engine assumes a single-currency environment (defaulting to EUR). Multi-currency support and FX-rate modeling are intentionally excluded from the current architectural scope.
 
 ---
@@ -71,7 +73,7 @@ class Plugin(ABC):
 ```
 
 #### Validation Layer
-The engine must include a validation layer implementing a **"Fail Loudly and Early"** philosophy. The system must abort execution immediately upon detecting:
+The engine must include a validation layer implementing a **"Fail Loudly and Early"** philosophy. The engine supports a configurable `error_policy`: `strict` (default, abort on errors) or `warn_and_continue` (log but proceed for debugging edge cases). The system must abort execution immediately (in `strict` mode) upon detecting:
 * **Invalid State Transitions:** e.g., impossible age jumps or inconsistent account totals.
 * **Invariant Violations:** e.g., violation of the cost basis + growth = total rule.
 * **Plugin Output Validation:** Ensuring plugin results conform to expected schemas and financial boundaries.
@@ -187,6 +189,7 @@ engine_version: "0.1"
 
 simulation:
   birth_year: 1974
+  error_policy: "strict"  # or "warn_and_continue"
   # Optional manual overrides (Defaults to current_year -> age 100 if omitted)
   start_year: 2026
   end_year: 2074
@@ -310,12 +313,12 @@ The engine must support a specialized debug mode including:
 
 #### 7.4 Scenario Comparison Support
 The architecture must anticipate and support:
-* **Batch Runs:** Efficient execution of multiple scenario variations using parallel processing.
+* **Batch Runs:** Efficient execution of multiple scenario variations using parallel processing. This utilizes a `multiprocessing` approach (CPU-bound) with a configurable `max_workers` limit (defaulting to `os.cpu_count()`).
 * **Diffable Outputs:** Output formats that facilitate clear comparisons between different simulation runs (e.g., comparing retirement ages or inflation assumptions).
 
 #### 7.5 Operational Improvements
 * **Dry Run Mode:** A `--dry-run` flag to validate configurations (required fields, plugin references, dependency loops) without executing the full simulation.
-* **Checkpointing:** Support for saving and loading full simulation states at any year $N$ to facilitate debugging and partial re-runs.
+* **Checkpointing:** Support for saving and loading full simulation states (all accounts, ledgers, and metadata) at any year $N$ using JSON (human-readable) or MessagePack (compact) formats to facilitate debugging and partial re-runs.
 * **Standardized Logging:**
     * **Levels:** `ERROR` (invariants/fatal), `WARN` (rounding/deprecation), `INFO` (milestones), `DEBUG` (full trace).
     * **Format:** Structured JSON format for machine-readability.
