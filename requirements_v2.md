@@ -9,11 +9,11 @@ The purpose of `mysim` is to build a highly decoupled financial simulation model
 The simulation engine must produce numerically identical structured outputs (or deterministic normalized outputs) for identical configuration inputs and engine versions. No implicit wall-clock time, locale, or non-seeded randomness may affect calculations. This ensures reproducibility for regression testing, scenario comparison, and result caching.
 
 #### 1.2 Time Semantics
-The simulation operates on a yearly basis, but ordering within the year is critical:
-* **Inflation:** Applied at the beginning of the cycle to raw inputs.
-* **Cashflow Reconciliation:** Occurs during the year to resolve inflows, outflows, and deductions.
-* **Growth:** Asset growth compounds after annual cashflow reconciliation unless explicitly overridden by plugin logic.
-* **Withdrawals:** Executed as part of cashflow reconciliation to cover shortfalls.
+The simulation operates on a yearly basis, but ordering within the year is critical to ensure mathematical consistency:
+1. **Inflation:** Applied at the beginning of the cycle to raw inputs and recurring financial trackers.
+2. **Cashflow Operations:** Resolution of annual inflows, outflows, and mandatory deductions (taxes/insurance).
+3. **Growth:** Asset growth compounds based on the state *after* primary cashflow resolution but *before* final shortfall withdrawals.
+4. **Withdrawals:** Executed at the end of the cycle to cover any remaining cashflow shortfalls, drawing from grown assets.
 
 #### 1.3 Non-Goals & Disclaimers
 * **Professional Advice:** The simulation provides planning-oriented approximations and does **not** constitute legal, tax, or financial advice.
@@ -47,8 +47,28 @@ The architecture consists of a country-agnostic **Core Simulation Engine** that 
 * **Data Transparency Rule:** All plugins have open read-only access to all active values within the model state during execution.
 * **Plugin Isolation Rules:** Plugins must interact with state via an explicit mutation API or domain ownership registry. Modifying attributes outside a plugin's specific domain is strictly prohibited to prevent tight coupling and debugging difficulties.
 
-#### Event Conflict Resolution
-Events scheduled for the same year execute deterministically in declaration order unless explicit plugin priorities override this behavior. The engine ensures a stable and predictable execution sequence for all concurrent event hooks.
+#### Event Conflict Resolution & Plugin Ordering
+The engine ensures a stable and predictable execution sequence for all concurrent event hooks:
+1. **Priority:** Plugins and events declare a `priority: int` (default: 0). Lower values execute first.
+2. **Dependencies:** Plugins may explicitly declare a dependency graph (e.g., `depends_on: ["german_tax"]`).
+3. **Deterministic Tie-breaking:** Conflicts with identical priorities are resolved by declaration order in the configuration.
+
+#### Plugin Interface Contract
+To ensure discoverability and validation, all plugins must adhere to a standardized interface:
+```python
+class Plugin(ABC):
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @abstractmethod
+    def priority(self) -> int: (default: 0)
+
+    @abstractmethod
+    def hooks(self) -> List[HookType]: (e.g., [PRE_PROCESS, CALCULATE_TAX])
+
+    @abstractmethod
+    def execute(self, state: SimulationState, hook: HookType) -> SimulationState: ...
+```
 
 #### Validation Layer
 The engine must include a validation layer implementing a **"Fail Loudly and Early"** philosophy. The system must abort execution immediately upon detecting:
@@ -67,8 +87,8 @@ For every year in the simulation timeline, the Core Engine executes the followin
 3. **`PROCESS_OUTFLOWS`**: Outflow modules calculate inflation-adjusted fixed living costs, variable spending, and target one-off expenses.
 4. **`PRE_TAX_SUMMARY`**: A utility layer compiling aggregate gross financial lines before calculations of structural deductions.
 5. **`CALCULATE_TAX_AND_INSURANCE`**: German Tax & Insurance modules hook in here to evaluate GKV, PV, and statutory progressive income tax ledgers.
-6. **`RECONCILE_CASHFLOW`**: Balances net annual cash flows. Resolves shortfalls by pulling from designated accounts utilizing specific depot-level strategies (FIFO, pro-rata), or routes positive capital surpluses into compounding investment targets.
-7. **`POST_PROCESS`**: Finalizes accounts by executing compound asset yield arithmetic (`capital_growth_rate`), pushing newly generated growth into the specialized accumulated yield tracking fields.
+6. **`POST_PROCESS`**: Executes compound asset yield arithmetic (`capital_growth_rate`) on the current state. Newly generated growth is pushed into the `capital_growth_accumulated` fields.
+7. **`RECONCILE_CASHFLOW`**: Balances net annual cash flows. Resolves shortfalls by pulling from grown designated accounts utilizing specific depot-level strategies (FIFO, pro-rata), or routes positive capital surpluses into compounding investment targets.
 
 ---
 
@@ -88,7 +108,7 @@ The core data container travels dynamically through the pipeline. It stores abso
         * `capital_growth_accumulated` (`Decimal`): Accumulated unrealized yield portion.
         * `capital_growth_rate` (`Decimal`): Individual expected compound return factor.
         * `withdrawal_strategy` (`str`): Strategy used upon asset liquidation (e.g., `fifo`, `pro-rata`).
-    * *Invariance Rule:* `capital_total` must always mathematically equal `capital_cost_basis + capital_growth_accumulated`.
+    * *Invariance Rule & Tolerance:* `capital_total` must always mathematically equal `capital_cost_basis + capital_growth_accumulated`. A rounding tolerance of `0.01` is allowed. If a discrepancy exists within this threshold, the engine must automatically adjust `capital_growth_accumulated` to enforce the invariant. Discrepancies exceeding this threshold must trigger a fatal error.
 * **Dynamic Maps (Financial Ledger Units):**
     * Every map entry contains a structured payload: `{"value": Decimal, "label": str}` where the label is in German.
     * `inflows`: Aggregates active incomes and gross asset realizations.
@@ -104,12 +124,17 @@ The engine must explicitly define the treatment of various financial flows:
 * **Taxes & Insurance:** All regulatory liabilities (including progressive income tax, capital gains tax withheld at source, and health/long-term care insurance) are strictly standardized under the `deductions` ledger. This ensures a uniform code footprint and reconciliation logic, regardless of whether the liability is withheld at the source or paid in arrears.
 * **Transfers:** Transfers between accounts do not count as net inflows/outflows but must be tracked for cost-basis adjustments.
 * **Growth:** Unrealized growth is tracked separately and is only taxable upon realization (e.g., withdrawal).
-* **Withdrawals:** Must follow a defined priority (e.g., principal-first vs. gain-first) based on the asset's liquidation strategy.
+* **Withdrawal Strategies:**
+    * `fifo`: Withdraw from the oldest units first. Requires tracking of individual tax lots (see Section 4.4).
+    * `pro-rata`: Withdraw proportionally from the cost basis and the accumulated growth (e.g., a 10% withdrawal pulls 10% from basis and 10% from growth).
+    * `gain-first`: Withdraw from accumulated growth first, preserving the cost basis as long as possible (often used for tax-optimization simulations).
 
 #### 4.2 Simulation Boundary Semantics
-The engine must handle edge-case financial states:
-* **Negative Capital:** Define whether negative balances are allowed (as debt) or if they mark the scenario as invalid/insolvent.
-* **Insolvency:** If liquidity is insufficient to cover mandatory outflows/deductions, the engine must trigger a configurable policy (e.g., stop simulation, mark scenario as failed).
+The engine must handle edge-case financial states using a strict policy set:
+* **Negative Capital:** By default, negative capital is not allowed. The engine treats any account dropping below zero as an insolvency event unless an explicit `allow_negative_capital: true` override is provided in the configuration.
+* **Insolvency Policies:** If annual liquidity is insufficient to cover mandatory outflows/deductions, the engine triggers one of the following configurable policies:
+    * `stop` (Default): Halt the simulation immediately and mark the scenario as failed.
+    * `debt`: Allow the simulation to continue by tracking the shortfall as a negative balance (debt liability).
 
 #### 4.3 Economic, Cash, and Tax Ledger Views
 To simplify future complexity, the engine formalizes the separation between different financial perspectives, even if implemented as internal views:
@@ -118,11 +143,17 @@ To simplify future complexity, the engine formalizes the separation between diff
 * **Taxable Ledger:** Tracks realized gains and other taxable events that trigger regulatory deductions.
 
 #### 4.4 Asset Lot Modeling (Future Scaling)
-While aggregate tracking of `capital_cost_basis` and `capital_growth_accumulated` is sufficient for high-level approximations, accurate FIFO taxation (especially with multiple buy points, partial sales, or different asset classes) will eventually require a transition to **tax lot modeling**. Future iterations of the model should support individual lots containing:
-* `acquisition_year`: The year of purchase.
-* `principal`: The cost basis for the specific lot.
-* `growth`: The accumulated growth for the specific lot.
-* `asset_class`: The classification (e.g., *Aktienfonds*) for specific tax treatment.
+While aggregate tracking of `capital_cost_basis` and `capital_growth_accumulated` is sufficient for high-level approximations, accurate FIFO taxation will eventually require a transition to **tax lot modeling**.
+
+**Evolution Roadmap:**
+* **Phase 1 (Current):** Aggregate tracking at the account level.
+* **Phase 2 (Future):** Full lot modeling where assets are represented as a collection of `TaxLot` objects:
+    * `acquisition_year`: The year of purchase.
+    * `principal`: The cost basis for the specific lot.
+    * `growth`: The accumulated growth for the specific lot.
+    * `asset_class`: The classification (e.g., *Aktienfonds*) for specific tax treatment.
+
+**Migration Path:** Future versions will introduce a `tax_lot_mode: bool` flag to toggle between aggregate and granular lot tracking.
 
 ---
 
@@ -130,17 +161,24 @@ While aggregate tracking of `capital_cost_basis` and `capital_growth_accumulated
 The system must support a dedicated German Tax and Insurance plugin parsing specialized tax rules:
 * **Historical Rule Sets:** Tax and insurance plugins must support year-dependent rule evaluation to reflect historical and future changes in German tax law.
 * **Filing Status Matrix:** Must compute using *Einzelveranlagung* (Single) or *Zusammenveranlagung* (Married), doubling brackets and standard tax-free allowances under the splitting methodology.
-* **Tax Deductions & Reliefs:** Honor `grundfreibetrag` and `sparer_pauschbetrag` boundaries. Support optional Church Tax (*Kirchensteuer*) options.
+* **Tax Deductions & Reliefs:**
+    * Honor `grundfreibetrag` and `sparer_pauschbetrag` boundaries.
+    * **Interaction:** Apply `sparer_pauschbetrag` first to capital gains, then apply `teilfreistellung` on the remaining taxable amount.
+    * Support optional Church Tax (*Kirchensteuer*) via a configurable `church_tax_rate` (typically 8-9% of the income tax).
 * **Teilfreistellung Integration:** Support a fixed 30% tax-exemption rate on capital realizations originating from designated equity funds (*Aktienfonds*), calculation-isolated to the growth component.
 * **Health & Long-Term Care Insurance System (GKV/PV/PKV):**
     * Evaluate health status across three clean dimensions: `pflichtversichert`, `freiwillig_versichert`, or `privat_versichert`.
     * Model the contribution ceilings (*Beitragsbemessungsgrenzen*).
-    * Process a historical compliance check (`past_states`) simulating the **9/10 Rule** to verify eligibility for the *Krankenversicherung der Rentner (KVdR)* upon reaching statutory pension milestones. Include child-count offsets affecting *Pflegeversicherung* calculations.
+    * **9/10 Rule for KVdR:** To verify eligibility for *Krankenversicherung der Rentner (KVdR)*, the engine must track `past_states` from age 16. Eligibility requires that at least 90% of the time between age 16 and statutory pension age was spent under a `pflichtversichert` status.
+    * Include child-count offsets affecting *Pflegeversicherung* calculations.
 
 ---
 
 ### 6. Configuration Schema (Target YAML Blueprint)
-This blueprint details how the parameters and dynamic override sequences pass parameters directly down to the pipeline hooks.
+This blueprint details how parameters pass to the pipeline hooks. The engine must validate configurations against a strict schema (e.g., Pydantic) ensuring:
+* **Required Fields:** e.g., `birth_year`, `capital_sources`.
+* **Value Constraints:** e.g., `inflation_rate >= 0`, `capital_growth_rate >= -1`.
+* **Cross-field Validation:** e.g., `end_year > start_year`.
 
 ```yaml
 # Configuration File Blueprint for "mysim"
@@ -231,28 +269,67 @@ events:
 ---
 
 ### 7. Core Operational Output
-Calculated states remain entirely transient within in-memory structures during operation. On completion of the simulation timeline execution, the dataset must pass to presentation output buffers formatting the structured results directly as a flat temporal matrix. This matrix is consumed directly by future UI adapters or written to non-persistent physical structures via simple CSV or JSON pipelines.
+Calculated states remain entirely transient within in-memory structures during operation. On completion of the simulation timeline execution, the dataset must pass to presentation output buffers formatting the structured results directly as a flat temporal matrix.
 
-#### 7.1 Auditability & Explainability
-Each calculated deduction, tax result, or reconciliation step must optionally expose a structured derivation trace. This trace provides visibility into the reasoning and intermediate steps of complex calculations for debugging and audit purposes.
+#### 7.1 Temporal Matrix Structure
+The flat output matrix must include the following standard columns for every year:
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `year` | `int` | Calendar year |
+| `age` | `int` | User age |
+| `total_inflows` | `Decimal` | Sum of all active/passive inflows |
+| `total_outflows` | `Decimal` | Sum of all expenses and target investments |
+| `total_deductions` | `Decimal` | Sum of taxes and social insurance |
+| `net_annual_result` | `Decimal` | `inflows - outflows - deductions` |
+| `capital_total_{account}` | `Decimal` | Total value per account entity |
+| `deductions_{type}` | `Decimal` | Detailed breakdown per deduction line item |
+| `is_insolvent` | `bool` | Flag indicating if an insolvency event occurred |
 
-#### 7.2 Logging & Debug Mode
+#### 7.2 Auditability & Explainability (Derivation Traces)
+Each calculated deduction, tax result, or reconciliation step must optionally expose a structured derivation trace (JSON). This provides visibility for debugging and audit purposes.
+**Example Trace:**
+```json
+{
+  "year": 2030,
+  "deduction_type": "income_tax",
+  "steps": [
+    {"step": "gross_income", "value": 50000, "source": "pension_plugin"},
+    {"step": "grundfreibetrag", "value": -23456, "source": "german_tax_plugin"},
+    {"step": "taxable_income", "value": 26544, "source": "calculation"},
+    {"step": "progressive_tax", "value": -4500, "source": "german_tax_plugin"}
+  ],
+  "result": 4500
+}
+```
+
+#### 7.3 Logging & Debug Mode
 The engine must support a specialized debug mode including:
 * **Trace Mode:** Detailed execution logs of pipeline hooks and plugin interactions.
 * **Yearly Snapshots:** Full state captures at the end of each annual cycle.
 * **Plugin Debug Hooks:** Hooks allowing plugins to inject custom debug information into the derivation trace.
 
-#### 7.3 Scenario Comparison Support
+#### 7.4 Scenario Comparison Support
 The architecture must anticipate and support:
-* **Batch Runs:** Efficient execution of multiple scenario variations.
+* **Batch Runs:** Efficient execution of multiple scenario variations using parallel processing.
 * **Diffable Outputs:** Output formats that facilitate clear comparisons between different simulation runs (e.g., comparing retirement ages or inflation assumptions).
+
+#### 7.5 Operational Improvements
+* **Dry Run Mode:** A `--dry-run` flag to validate configurations (required fields, plugin references, dependency loops) without executing the full simulation.
+* **Checkpointing:** Support for saving and loading full simulation states at any year $N$ to facilitate debugging and partial re-runs.
+* **Standardized Logging:**
+    * **Levels:** `ERROR` (invariants/fatal), `WARN` (rounding/deprecation), `INFO` (milestones), `DEBUG` (full trace).
+    * **Format:** Structured JSON format for machine-readability.
 
 
 ---
 
 ### 8. Testability Requirements
 To ensure the integrity of the financial simulation, the following testing strategies are mandatory:
-* **Golden Test Scenarios:** A suite of comprehensive, hand-verified "golden" scenarios used as benchmarks for correctness.
+* **Golden Test Scenarios:** A suite of comprehensive, hand-verified "golden" scenarios used as benchmarks for correctness. Scenarios must include:
+    * **Baseline Scenario:** Single account, zero inflation, zero taxes, simple constant growth.
+    * **German Tax Scenario:** Progressive income tax, `grundfreibetrag`, `sparer_pauschbetrag`, and `teilfreistellung` interactions.
+    * **Withdrawal Strategy Scenario:** Side-by-side comparison of `fifo`, `pro-rata`, and `gain-first` behaviors.
+    * **Insolvency Scenario:** Verified trigger of `stop` and `debt` policies under liquidity shortfalls.
 * **Deterministic Regression Tests:** Automated tests ensuring that engine changes do not alter outputs for identical configurations.
 * **Invariant Tests:** Continuous validation of financial invariants (e.g., `capital_total == cost_basis + growth`) across all simulated years.
 * **Snapshot Testing:** Comparison of full yearly state snapshots against known good baselines to detect subtle calculation drifts.
