@@ -1,0 +1,83 @@
+# Configuration File for "mysim"
+schema_version: 1
+engine_version: "0.1"
+
+simulation:
+  birth_year: 1974
+  start_year: 2026
+  end_year: 2074
+  baseline_inflation_rate: 0.02
+  capital_withdrawal_order:
+    - "tagesgeld"
+    - "depot_trade_republic"
+    - "depot_comdirect"
+
+capital_sources:
+  tagesgeld:
+    label: "Tagesgeld Reserve"
+    capital_total: 50000.0
+    capital_cost_basis: 50000.0
+    capital_growth_accumulated: 0.0
+    capital_growth_rate: 0.02
+    withdrawal_strategy: "pro-rata"
+  depot_trade_republic:
+    label: "Trade Republic Depot"
+    capital_total: 150000.0
+    capital_cost_basis: 110000.0
+    capital_growth_accumulated: 40000.0
+    capital_growth_rate: 0.04
+    withdrawal_strategy: "fifo"
+  depot_comdirect:
+    label: "Comdirect Kern-Depot"
+    capital_total: 300000.0
+    capital_cost_basis: 150000.0
+    capital_growth_accumulated: 150000.0
+    capital_growth_rate: 0.05
+    withdrawal_strategy: "fifo"
+
+generic_trackers:
+  fixed_costs_living: 24000.0
+  pocket_money: 6000.0
+  pensions:
+    - name: "gesetzliche_rente"
+      label: "Gesetzliche Rente (DRV)"
+      amount: 21600.0
+      start_year: 2041
+      yearly_increase_rate: 0.01
+
+german_plugin_config:
+  income_tax_filing_status: "married"
+  confession_has_church_tax: true
+  number_of_children: 0
+  stock_fund_tax_exempt_rate: 0.30
+  fixed_capital_gains_tax_rate: 0.25
+  sparer_pauschbetrag: 2000.0
+  grundfreibetrag: 23456.0
+  health_insurance_status: "freiwillig_versichert"
+  kvdr_9_10_rule_fulfilled: true
+  gkv_contribution_rate: 0.146
+  gkv_additional_contribution: 0.017
+  gkv_beitragsbemessungsgrenze_annual: 62100.0
+
+events:
+  - year: 2030
+    label: "Erbschaft"
+    plugin: "inflow_tracker"
+    action: "one_time_inflow"
+    parameters:
+      amount: 50000.0
+      type: "tax_free"
+
+  - year: 2035
+    label: "Anpassung Inflation"
+    plugin: "core_engine"
+    action: "update_baseline"
+    parameters:
+      inflation_rate: 0.035
+
+  - year: 2045
+    label: "Statuswechsel KVdR"
+    plugin: "german_tax_insurance"
+    action: "change_insurance_status"
+    parameters:
+      health_insurance_status: "pflichtversichert"
