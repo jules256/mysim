@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}mysim — {{ scenario_name }} Ergebnisse{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='print.css') }}" media="print">
+{% endblock %}
+
+{% block content %}
+<section class="results-view">
+    <header class="results-header">
+        <h1>Ergebnisse: {{ scenario_name }}</h1>
+        <div class="results-actions">
+            <a href="{{ url_for('main.configure', name=scenario_name) }}" class="btn btn-secondary">Konfiguration</a>
+            <a href="{{ url_for('main.export_csv', name=scenario_name) }}" class="btn btn-secondary">CSV Export</a>
+            <a href="{{ url_for('main.export_xlsx', name=scenario_name) }}" class="btn btn-secondary">XLSX Export</a>
+            <button type="button" class="btn btn-secondary" onclick="window.print()">Drucken</button>
+        </div>
+    </header>
+
+    <!-- Column selector (requires JS) -->
+    <details class="column-selector js-only" id="column-selector">
+        <summary>Spaltenauswahl</summary>
+        <form method="GET" action="{{ url_for('main.results', name=scenario_name) }}" id="cols-form">
+            <div class="column-checkboxes">
+                {% for col in all_columns %}
+                <label class="column-checkbox">
+                    <input type="checkbox" name="col" value="{{ col }}"
+                           {% if col in active_columns %}checked{% endif %}>
+                    {{ col }}
+                </label>
+                {% endfor %}
+            </div>
+            <button type="submit" class="btn btn-small">Anwenden</button>
+        </form>
+    </details>
+
+    <!-- Results table -->
+    <div class="table-container" role="region" aria-label="Simulationsergebnisse" tabindex="0">
+        <table>
+            <thead>
+                <tr>
+                    {% for col in active_columns %}
+                    <th scope="col">{{ col }}</th>
+                    {% endfor %}
+                    <th scope="col" class="trace-col">Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in results %}
+                <tr>
+                    {% for col in active_columns %}
+                    <td>
+                        {% set val = row[col] %}
+                        {% if val is number and val is not sameas true and val is not sameas false %}
+                            {% if val is integer %}
+                                {{ val }}
+                            {% else %}
+                                {{ val | german_currency }}
+                            {% endif %}
+                        {% elif val is sameas true or val is sameas false %}
+                            {{ "Ja" if val else "Nein" }}
+                        {% else %}
+                            {{ val }}
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                    <td class="trace-col">
+                        <details class="trace-accordion" data-year="{{ row.year }}" data-scenario="{{ scenario_name }}">
+                            <summary>Trace</summary>
+                            <div class="trace-content" aria-live="polite">
+                                <p class="loading-indicator">Lade...</p>
+                            </div>
+                        </details>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <p class="results-meta">
+        {{ results | length }} Jahre simuliert.
+    </p>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}

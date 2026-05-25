@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}mysim{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <nav aria-label="Hauptnavigation">
+        <div class="nav-container">
+            <a href="{{ url_for('main.index') }}" class="nav-brand">mysim</a>
+            <span class="nav-subtitle">Finanzsimulation</span>
+        </div>
+    </nav>
+
+    <main>
+        <noscript>
+            <div class="noscript-warning" role="alert">
+                Für volle Funktionalität (z.B. Spaltenauswahl, Akkordeons) bitte JavaScript aktivieren.
+            </div>
+        </noscript>
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer>
+        <p>mysim v0.1 — Keine Finanz-, Steuer- oder Rechtsberatung.</p>
+    </footer>
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

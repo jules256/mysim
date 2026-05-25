@@ -1,0 +1,34 @@
+{% if traces %}
+<div class="trace-detail">
+    {% for trace in traces %}
+    <div class="trace-block">
+        <h4>{{ trace.deduction_type | default("Berechnung") }} ({{ trace.year | default("") }})</h4>
+        {% if trace.steps %}
+        <table class="trace-table">
+            <thead>
+                <tr>
+                    <th>Schritt</th>
+                    <th>Wert</th>
+                    <th>Quelle</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for step in trace.steps %}
+                <tr>
+                    <td>{{ step.step }}</td>
+                    <td>{{ step.value }}</td>
+                    <td>{{ step.source }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+        {% if trace.result %}
+        <p class="trace-result"><strong>Ergebnis:</strong> {{ trace.result }}</p>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<p class="trace-empty">Keine Berechnungsdetails verfügbar.</p>
+{% endif %}

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}mysim — Szenarien{% endblock %}
+
+{% block content %}
+<section class="scenario-browser">
+    <h1>Verfügbare Szenarien</h1>
+
+    {% if scenarios %}
+    <ul class="scenario-list">
+        {% for name in scenarios %}
+        <li>
+            <a href="{{ url_for('main.configure', name=name) }}" class="scenario-link">
+                <span class="scenario-icon" aria-hidden="true">📊</span>
+                <span class="scenario-name">{{ name }}</span>
+            </a>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty-state">
+        Keine Szenarien gefunden. Bitte YAML-Dateien im Szenario-Verzeichnis ablegen.
+    </p>
+    {% endif %}
+</section>
+{% endblock %}

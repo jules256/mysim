@@ -1,0 +1,10 @@
+
+Run with: mysim-web --scenarios ./scenarios --port 5000
+
+source .venv/bin/activate
+mysim config/example.yaml
+
+mysim config/example.yaml --format json    # JSON output
+mysim config/example.yaml --debug          # Include derivation traces
+mysim config/example.yaml --dry-run        # Validate config only
+mysim config/example.yaml -o results.txt   # Write to file

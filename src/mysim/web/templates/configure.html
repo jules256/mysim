@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+
+{% block title %}mysim — {{ scenario_name }} konfigurieren{% endblock %}
+
+{% block content %}
+<section class="configure-view">
+    <h1>Szenario: {{ scenario_name }}</h1>
+    <p class="hint">Änderungen sind transient — die Originaldatei wird nicht überschrieben.</p>
+
+    <form method="POST" action="{{ url_for('main.run_simulation', name=scenario_name) }}" id="config-form">
+        
+        <fieldset>
+            <legend>Simulationsparameter</legend>
+            {% for key, value in simple_params.items() %}
+            <div class="form-group">
+                <label for="field-{{ key }}">{{ key }}</label>
+                {% if value is sameas true or value is sameas false %}
+                <select id="field-{{ key }}" name="simple.{{ key }}">
+                    <option value="true" {% if value %}selected{% endif %}>Ja</option>
+                    <option value="false" {% if not value %}selected{% endif %}>Nein</option>
+                </select>
+                {% else %}
+                <input type="text" id="field-{{ key }}" name="simple.{{ key }}" 
+                       value="{{ value }}" autocomplete="off">
+                {% endif %}
+            </div>
+            {% endfor %}
+        </fieldset>
+
+        {% for key, yaml_text in complex_params.items() %}
+        <fieldset>
+            <legend>{{ key | replace("_", " ") | title }}</legend>
+            <div class="form-group">
+                <label for="complex-{{ key }}">YAML ({{ key }})</label>
+                <textarea id="complex-{{ key }}" name="complex.{{ key }}" 
+                          rows="10" spellcheck="false">{{ yaml_text }}</textarea>
+            </div>
+        </fieldset>
+        {% endfor %}
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Simulation ausführen</button>
+            <a href="{{ url_for('main.index') }}" class="btn btn-secondary">Zurück</a>
+        </div>
+    </form>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}

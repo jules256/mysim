@@ -10,6 +10,8 @@ requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
+    "flask>=3.0",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +22,7 @@ dev = [
 
 [project.scripts]
 mysim = "mysim.cli:main"
+mysim-web = "mysim.web.run:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mysim"]
