@@ -90,7 +90,7 @@ The core data container travels dynamically through the pipeline. It stores abso
 #### 4.1 Accounting Semantics
 The engine must explicitly define the treatment of various financial flows:
 * **Realized Gains:** Treated as `inflows` within a dedicated sub-ledger purely as a calculation base for taxes and GKV. They do **not** count as "new external cash" injected into the system, as the capital already exists within the asset pool. This prevents double-counting during cashflow reconciliation.
-* **Taxes:** Can be categorized as `outflows` (if paid from net) or `deductions` (if withheld from gross).
+* **Taxes & Insurance:** All regulatory liabilities (including progressive income tax, capital gains tax withheld at source, and health/long-term care insurance) are strictly standardized under the `deductions` ledger. This ensures a uniform code footprint and reconciliation logic, regardless of whether the liability is withheld at the source or paid in arrears.
 * **Transfers:** Transfers between accounts do not count as net inflows/outflows but must be tracked for cost-basis adjustments.
 * **Growth:** Unrealized growth is tracked separately and is only taxable upon realization (e.g., withdrawal).
 * **Withdrawals:** Must follow a defined priority (e.g., principal-first vs. gain-first) based on the asset's liquidation strategy.
