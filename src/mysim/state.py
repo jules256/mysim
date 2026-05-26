@@ -17,6 +17,7 @@ class LedgerEntry:
 
     value: Decimal
     label: str  # German presentation label
+    is_tax_free: bool = False
 
 
 @dataclass
@@ -29,6 +30,7 @@ class CapitalSource:
     capital_growth_accumulated: Decimal
     capital_growth_rate: Decimal
     withdrawal_strategy: str  # "fifo", "pro-rata", "gain-first"
+    is_equity_fund: bool = False
 
     def enforce_invariant(self) -> None:
         """Enforce capital_total == capital_cost_basis + capital_growth_accumulated."""
@@ -69,6 +71,9 @@ class SimulationState:
 
     # Insolvency flag
     is_insolvent: bool = False
+
+    # Allow negative capital when explicitly enabled in configuration
+    allow_negative_capital: bool = False
 
     # Derivation traces for auditability
     traces: list[dict[str, Any]] = field(default_factory=list)

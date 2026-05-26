@@ -34,25 +34,22 @@ class InflowPlugin(Plugin):
 
     def execute(self, state: SimulationState, hook: HookType) -> SimulationState:
         trackers = self._config.generic_trackers
-
-        # Initialize pension amounts on first run
-        if not self._initialized:
-            for pension in trackers.pensions:
-                self._pension_amounts[pension.name] = pension.amount
-            self._initialized = True
+        start_year = self._config.simulation.start_year or 2026
 
         # Process pensions
         for pension in trackers.pensions:
             if state.year >= pension.start_year:
-                amount = self._pension_amounts[pension.name]
+                # Formula: amount * (1 + rate)^(years_since_start_of_pension)
+                # But specification says: current_year - start_year + 1 logic for inflation/increases.
+                # Actually, for pensions, it's usually years since it started.
+                # To be consistent with "years_elapsed", let's use:
+                years_elapsed = state.year - pension.start_year
+                amount = pension.amount * (
+                    (Decimal("1") + pension.yearly_increase_rate) ** years_elapsed
+                )
 
                 state.inflows[pension.name] = LedgerEntry(
                     value=amount, label=pension.label
-                )
-
-                # Apply yearly increase for next year
-                self._pension_amounts[pension.name] = amount * (
-                    Decimal("1") + pension.yearly_increase_rate
                 )
 
         # Process one-time inflow events
@@ -62,7 +59,9 @@ class InflowPlugin(Plugin):
                     amount = Decimal(str(event.parameters["amount"]))
                     key = f"event_{event.label.lower().replace(' ', '_')}"
                     state.inflows[key] = LedgerEntry(
-                        value=amount, label=event.label
+                        value=amount,
+                        label=event.label,
+                        is_tax_free=event.parameters.get("type") == "tax_free",
                     )
 
         return state

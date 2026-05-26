@@ -62,7 +62,8 @@
 
         var year = details.dataset.year;
         var scenario = details.dataset.scenario;
-        var url = "/scenario/" + encodeURIComponent(scenario) + "/trace/" + encodeURIComponent(year);
+        var cfg = details.dataset.cfg;
+        var url = "/scenario/" + encodeURIComponent(scenario) + "/trace/" + encodeURIComponent(year) + "?cfg=" + encodeURIComponent(cfg);
 
         fetch(url)
             .then(function (response) {

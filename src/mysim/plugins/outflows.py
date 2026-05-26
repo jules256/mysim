@@ -29,27 +29,24 @@ class OutflowPlugin(Plugin):
 
     def execute(self, state: SimulationState, hook: HookType) -> SimulationState:
         trackers = self._config.generic_trackers
+        start_year = self._config.simulation.start_year or 2026
 
-        # Initialize on first run
-        if self._fixed_costs is None:
-            self._fixed_costs = trackers.fixed_costs_living
-        if self._pocket_money is None:
-            self._pocket_money = trackers.pocket_money
+        # Consistent years_elapsed logic: first year (years_elapsed=0) has no inflation
+        years_elapsed = state.year - start_year
+        inflation_multiplier = (Decimal("1") + state.inflation_rate) ** years_elapsed
 
-        # Apply inflation adjustment
-        inflation_factor = Decimal("1") + state.inflation_rate
-        self._fixed_costs = self._fixed_costs * inflation_factor
-        self._pocket_money = self._pocket_money * inflation_factor
+        fixed_costs = trackers.fixed_costs_living * inflation_multiplier
+        pocket_money = trackers.pocket_money * inflation_multiplier
 
         # Register outflows
-        if self._fixed_costs > ZERO:
+        if fixed_costs > ZERO:
             state.outflows["fixed_costs_living"] = LedgerEntry(
-                value=self._fixed_costs, label="Lebenshaltungskosten"
+                value=fixed_costs, label="Lebenshaltungskosten"
             )
 
-        if self._pocket_money > ZERO:
+        if pocket_money > ZERO:
             state.outflows["pocket_money"] = LedgerEntry(
-                value=self._pocket_money, label="Taschengeld"
+                value=pocket_money, label="Taschengeld"
             )
 
         return state

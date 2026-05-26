@@ -72,9 +72,12 @@ class GermanTaxInsurancePlugin(Plugin):
                 value=soli, label="Solidaritätszuschlag"
             )
 
-        # Capital gains tax (on realized gains only - approximated as zero in base flow)
-        # In reconciliation, realized gains would trigger this; for now placeholder
-        # This is activated when withdrawals generate realized gains
+        # Capital gains tax (on realized gains only)
+        cap_gains_tax = self._calculate_capital_gains_tax(state, cfg)
+        if cap_gains_tax > ZERO:
+            state.deductions["capital_gains_tax"] = LedgerEntry(
+                value=cap_gains_tax, label="Abgeltungsteuer"
+            )
 
         # Health insurance (GKV)
         gkv = self._calculate_gkv(state, cfg)
@@ -108,9 +111,8 @@ class GermanTaxInsurancePlugin(Plugin):
     def _compute_taxable_income(self, state: SimulationState) -> Decimal:
         """Compute total taxable income from inflows."""
         taxable = ZERO
-        for key, entry in state.inflows.items():
-            # Skip tax-free inflows (events marked as tax_free)
-            if "tax_free" in key:
+        for entry in state.inflows.values():
+            if entry.is_tax_free:
                 continue
             taxable += entry.value
         return taxable
@@ -119,31 +121,22 @@ class GermanTaxInsurancePlugin(Plugin):
         self, taxable_income: Decimal, cfg: GermanPluginConfig
     ) -> Decimal:
         """Calculate German progressive income tax using the 2024 formula approximation."""
-        grundfreibetrag = cfg.grundfreibetrag
         is_married = cfg.income_tax_filing_status == "married"
+        grundfreibetrag = cfg.grundfreibetrag
 
-        # Apply splitting for married (Zusammenveranlagung)
         if is_married:
-            grundfreibetrag *= TWO
-            splitting_income = taxable_income / TWO
+            # Splitting: tax(zvE) = 2 * tax_single(zvE / 2)
+            # The grundfreibetrag is already accounted for in _progressive_formula
+            half_income = taxable_income / TWO
+            half_taxable = half_income - grundfreibetrag
+            if half_taxable <= ZERO:
+                return ZERO
+            tax_on_half = self._progressive_formula(half_taxable)
+            total_tax = tax_on_half * TWO
         else:
-            splitting_income = taxable_income
-
-        # Apply Grundfreibetrag
-        if is_married:
             effective_taxable = taxable_income - grundfreibetrag
-        else:
-            effective_taxable = taxable_income - grundfreibetrag
-
-        if effective_taxable <= ZERO:
-            return ZERO
-
-        # Simplified German progressive tax calculation
-        # Using splitting methodology: calculate tax on half, then double
-        if is_married:
-            single_tax = self._progressive_formula(splitting_income - (grundfreibetrag / TWO))
-            total_tax = single_tax * TWO
-        else:
+            if effective_taxable <= ZERO:
+                return ZERO
             total_tax = self._progressive_formula(effective_taxable)
 
         return total_tax.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -204,6 +197,66 @@ class GermanTaxInsurancePlugin(Plugin):
         max_soli = income_tax * Decimal("0.055")
         return min(soli, max_soli).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
+    def _calculate_capital_gains_tax(
+        self, state: SimulationState, cfg: GermanPluginConfig
+    ) -> Decimal:
+        """Calculate capital gains tax with Sparer-Pauschbetrag and Teilfreistellung."""
+        total_cap_gains = ZERO
+        equity_gains = ZERO
+        other_gains = ZERO
+
+        # Look for realized gains in inflows
+        for key, entry in state.inflows.items():
+            if key.startswith("realized_gain_"):
+                # Extract account key to check if it's an equity fund
+                acc_key = key[len("realized_gain_"):]
+                is_equity = False
+                if acc_key in state.capital_sources:
+                    is_equity = state.capital_sources[acc_key].is_equity_fund
+
+                if is_equity:
+                    equity_gains += entry.value
+                else:
+                    other_gains += entry.value
+
+        total_cap_gains = equity_gains + other_gains
+        if total_cap_gains <= ZERO:
+            return ZERO
+
+        # 1. Apply Sparer-Pauschbetrag
+        pauschbetrag = cfg.sparer_pauschbetrag
+        if cfg.income_tax_filing_status == "married":
+            pauschbetrag *= TWO
+
+        # Pro-rata application of Pauschbetrag to equity and other gains to be fair,
+        # but the law doesn't specify. Usually applied to any gain.
+        # Let's apply it to other gains first, then equity gains.
+        remaining_pausch = pauschbetrag
+
+        if other_gains > ZERO:
+            used = min(other_gains, remaining_pausch)
+            other_gains -= used
+            remaining_pausch -= used
+
+        if remaining_pausch > ZERO and equity_gains > ZERO:
+            used = min(equity_gains, remaining_pausch)
+            equity_gains -= used
+            remaining_pausch -= used
+
+        # 2. Apply Teilfreistellung (30%) on remaining equity gains
+        taxable_equity_gains = equity_gains * (Decimal("1") - cfg.stock_fund_tax_exempt_rate)
+
+        total_taxable_gains = other_gains + taxable_equity_gains
+
+        # 3. Apply Abgeltungsteuer rate (25%) + Soli (5.5% of tax)
+        tax_rate = cfg.fixed_capital_gains_tax_rate
+        gains_tax = total_taxable_gains * tax_rate
+
+        # Add Soli on top (5.5% of the 25% tax)
+        soli_on_gains = gains_tax * Decimal("0.055")
+
+        return (gains_tax + soli_on_gains).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
     def _calculate_gkv(
         self, state: SimulationState, cfg: GermanPluginConfig
     ) -> Decimal:
@@ -212,6 +265,8 @@ class GermanTaxInsurancePlugin(Plugin):
             return ZERO  # PKV handled separately (flat premium, out of scope)
 
         # Contribution base: total income capped at BBG
+        # For GKV, total_inflows might include realized gains which might or might not be relevant
+        # depending on status. For simplicity, we use total_inflows but could be more granular.
         income = state.total_inflows
         bbg = cfg.gkv_beitragsbemessungsgrenze_annual
         contribution_base = min(income, bbg)

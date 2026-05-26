@@ -29,7 +29,8 @@ from mysim.plugins.outflows import OutflowPlugin
 from mysim.plugins.pre_tax_summary import PreTaxSummaryPlugin
 from mysim.plugins.reconcile import ReconcilePlugin
 from mysim.web.exports import cleanup_old_exports, generate_csv, generate_xlsx
-from mysim.web.security import rate_limited, validate_scenario_name
+from mysim.web.persistence import decode_config, encode_config
+from mysim.web.security import SCENARIO_NAME_PATTERN, rate_limited, validate_scenario_name
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +53,6 @@ def _list_scenarios() -> list[str]:
     for f in sorted(scenarios_dir.iterdir()):
         if f.suffix == ".yaml" and f.stat().st_size <= current_app.config["MAX_YAML_SIZE"]:
             name = f.stem
-            # Validate name format
-            from mysim.web.security import SCENARIO_NAME_PATTERN
             if SCENARIO_NAME_PATTERN.match(name) and len(name) <= 64:
                 scenarios.append(name)
     return scenarios
@@ -79,7 +78,7 @@ def _extract_simple_params(data: dict) -> dict[str, Any]:
     simple = {}
     sim = data.get("simulation", {})
     for key in ("birth_year", "start_year", "end_year", "baseline_inflation_rate",
-                "insolvency_policy"):
+                "insolvency_policy", "allow_negative_capital"):
         if key in sim:
             simple[f"simulation.{key}"] = sim[key]
 
@@ -179,9 +178,8 @@ def _coerce_value(value: str) -> Any:
     except ValueError:
         pass
     try:
-        # Keep as string for Decimal handling by Pydantic
-        Decimal(value)
-        return float(value)
+        # Preserve numeric precision as Decimal for the simulation schema.
+        return Decimal(value)
     except (InvalidOperation, ValueError):
         pass
     return value
@@ -266,12 +264,35 @@ def run_simulation(name: str):
             scenario_name=name,
         ), 400
 
+    # Encode config for URL persistence
+    cfg_param = encode_config(config)
+
+    # Get column selection from form
+    cols = request.form.get("cols", "")
+    return redirect(url_for("main.results", name=name, cfg=cfg_param, cols=cols))
+
+
+@bp.route("/scenario/<name>/results")
+def results(name: str):
+    """Results view - displays simulation output table (PRG: GET step)."""
+    name = validate_scenario_name(name)
+
+    # Decode config from URL param
+    cfg_param = request.args.get("cfg")
+    if not cfg_param:
+        return redirect(url_for("main.configure", name=name))
+
+    try:
+        config = decode_config(cfg_param)
+    except Exception as e:
+        abort(400, description=str(e))
+
     # Enable debug for traces
     config.simulation.debug = True
 
     # Run simulation
     try:
-        results = _run_simulation(config)
+        sim_results = _run_simulation(config)
     except Exception as e:
         logger.error("Simulation failed for scenario '%s': %s", name, e)
         return render_template(
@@ -280,28 +301,6 @@ def run_simulation(name: str):
             error_message=str(e),
             scenario_name=name,
         ), 500
-
-    # Store results transiently via URL params (redirect to GET view)
-    # For simplicity, store in app-level cache keyed by scenario name
-    # (single-user assumption per spec)
-    current_app.config.setdefault("_results_cache", {})
-    current_app.config["_results_cache"][name] = results
-
-    # Get column selection from form
-    cols = request.form.get("cols", "")
-    return redirect(url_for("main.results", name=name, cols=cols))
-
-
-@bp.route("/scenario/<name>/results")
-def results(name: str):
-    """Results view - displays simulation output table (PRG: GET step)."""
-    name = validate_scenario_name(name)
-
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
-
-    if sim_results is None:
-        return redirect(url_for("main.configure", name=name))
 
     # Column selection from URL params
     cols_param = request.args.get("cols", "")
@@ -317,6 +316,7 @@ def results(name: str):
         all_columns=all_columns,
         active_columns=active_columns,
         cols_param=cols_param,
+        cfg_param=cfg_param,
     )
 
 
@@ -325,11 +325,17 @@ def get_trace(name: str, year: int):
     """AJAX endpoint for lazy-loading derivation traces."""
     name = validate_scenario_name(name)
 
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
+    # Decode config from URL param
+    cfg_param = request.args.get("cfg")
+    if not cfg_param:
+        abort(400, description="Missing configuration parameter.")
 
-    if sim_results is None:
-        abort(404, description="No simulation results available.")
+    try:
+        config = decode_config(cfg_param)
+        config.simulation.debug = True
+        sim_results = _run_simulation(config)
+    except Exception as e:
+        abort(500, description=f"Failed to re-run simulation for trace: {e}")
 
     # Find the trace for the requested year
     for row in sim_results:
@@ -351,11 +357,16 @@ def export_csv(name: str):
     """Export simulation results as CSV."""
     name = validate_scenario_name(name)
 
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
+    # Decode config from URL param
+    cfg_param = request.args.get("cfg")
+    if not cfg_param:
+        abort(400, description="Missing configuration parameter.")
 
-    if sim_results is None:
-        abort(404, description="No simulation results available. Run the simulation first.")
+    try:
+        config = decode_config(cfg_param)
+        sim_results = _run_simulation(config)
+    except Exception as e:
+        abort(500, description=f"Failed to run simulation for export: {e}")
 
     filename, content = generate_csv(sim_results, name)
 
@@ -379,11 +390,16 @@ def export_xlsx(name: str):
     """Export simulation results as XLSX."""
     name = validate_scenario_name(name)
 
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
+    # Decode config from URL param
+    cfg_param = request.args.get("cfg")
+    if not cfg_param:
+        abort(400, description="Missing configuration parameter.")
 
-    if sim_results is None:
-        abort(404, description="No simulation results available. Run the simulation first.")
+    try:
+        config = decode_config(cfg_param)
+        sim_results = _run_simulation(config)
+    except Exception as e:
+        abort(500, description=f"Failed to run simulation for export: {e}")
 
     include_traces = request.args.get("traces", "0") == "1"
     filename, xlsx_bytes = generate_xlsx(sim_results, name, include_traces=include_traces)
