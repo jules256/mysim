@@ -62,7 +62,9 @@ class InflowPlugin(Plugin):
                     amount = Decimal(str(event.parameters["amount"]))
                     key = f"event_{event.label.lower().replace(' ', '_')}"
                     state.inflows[key] = LedgerEntry(
-                        value=amount, label=event.label
+                        value=amount,
+                        label=event.label,
+                        is_tax_free=event.parameters.get("type") == "tax_free",
                     )
 
         return state

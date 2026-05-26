@@ -48,7 +48,7 @@ def _validate_capital_invariants(state: SimulationState) -> None:
 def _validate_no_negative_capital(state: SimulationState) -> None:
     """Check for negative capital unless insolvency is flagged."""
     for key, source in state.capital_sources.items():
-        if source.capital_total < Decimal("0") and not state.is_insolvent:
+        if source.capital_total < Decimal("0") and not state.allow_negative_capital and not state.is_insolvent:
             raise ValidationError(
                 f"Negative capital detected for '{key}' in year {state.year}: "
                 f"total={source.capital_total}"

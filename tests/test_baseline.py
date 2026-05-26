@@ -6,6 +6,7 @@ import pytest
 
 from mysim.config import AppConfig
 from mysim.engine import SimulationEngine
+from mysim.plugins.german_tax_insurance import GermanTaxInsurancePlugin
 from mysim.plugins.growth import GrowthPlugin
 from mysim.plugins.inflation import InflationPlugin
 from mysim.plugins.inflows import InflowPlugin
@@ -126,6 +127,63 @@ class TestBaselineScenario:
         assert results[0]["age"] == 52
         assert results[-1]["year"] == 2030
         assert results[-1]["age"] == 56
+
+    def test_tax_free_inflow_is_excluded_from_taxable_income(self):
+        """A tax-free one-time inflow should not increase income tax."""
+        raw = _minimal_config()
+        raw["events"] = [
+            {
+                "year": 2026,
+                "label": "Erbschaft",
+                "plugin": "inflow_tracker",
+                "action": "one_time_inflow",
+                "parameters": {"amount": "50000", "type": "tax_free"},
+            }
+        ]
+        raw["german_plugin_config"]["health_insurance_status"] = "privat_versichert"
+        raw["german_plugin_config"]["grundfreibetrag"] = "11604"
+
+        config = AppConfig(**raw)
+        plugins = [
+            InflationPlugin(config),
+            InflowPlugin(config),
+            OutflowPlugin(config),
+            PreTaxSummaryPlugin(),
+            GermanTaxInsurancePlugin(config),
+            GrowthPlugin(),
+            ReconcilePlugin(config),
+        ]
+        engine = SimulationEngine(config=config, plugins=plugins)
+        results = engine.run()
+
+        assert results[0]["total_inflows"] == Decimal("50000")
+        assert results[0]["total_deductions"] == Decimal("0")
+
+    def test_allow_negative_capital_continues_with_debt(self):
+        """When negative capital is allowed, the simulation continues instead of stopping."""
+        raw = _minimal_config()
+        raw["capital_sources"]["savings"]["capital_total"] = "1000"
+        raw["capital_sources"]["savings"]["capital_cost_basis"] = "1000"
+        raw["generic_trackers"]["fixed_costs_living"] = "50000"
+        raw["simulation"]["allow_negative_capital"] = True
+        raw["simulation"]["insolvency_policy"] = "debt"
+        raw["german_plugin_config"]["health_insurance_status"] = "privat_versichert"
+
+        config = AppConfig(**raw)
+        plugins = [
+            InflationPlugin(config),
+            InflowPlugin(config),
+            OutflowPlugin(config),
+            PreTaxSummaryPlugin(),
+            GrowthPlugin(),
+            ReconcilePlugin(config),
+        ]
+        engine = SimulationEngine(config=config, plugins=plugins)
+        results = engine.run()
+
+        assert len(results) > 1
+        assert results[0]["is_insolvent"] is False
+        assert results[0]["capital_total_savings"] < Decimal("0")
 
     def test_no_insolvency_with_pure_growth(self):
         """No insolvency when there are no outflows."""

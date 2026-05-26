@@ -67,11 +67,14 @@ class ReconcilePlugin(Plugin):
                 continue
 
             source = state.capital_sources[account_key]
-            if source.capital_total <= ZERO:
+
+            if source.capital_total <= ZERO and not state.allow_negative_capital:
                 continue
 
-            available = source.capital_total
-            withdrawal = min(remaining, available)
+            if state.allow_negative_capital:
+                withdrawal = remaining
+            else:
+                withdrawal = min(remaining, source.capital_total)
 
             self._withdraw_from_source(source, withdrawal)
             remaining -= withdrawal
@@ -84,13 +87,19 @@ class ReconcilePlugin(Plugin):
             )
 
         if remaining > ZERO:
-            # Insolvency: could not cover shortfall
-            logger.warning(
-                "Insolvency in year %d: uncovered shortfall of %s",
-                state.year,
-                remaining,
-            )
-            state.is_insolvent = True
+            if state.allow_negative_capital:
+                logger.warning(
+                    "Negative capital override active, but shortfall remains in year %d: %s",
+                    state.year,
+                    remaining,
+                )
+            else:
+                logger.warning(
+                    "Insolvency in year %d: uncovered shortfall of %s",
+                    state.year,
+                    remaining,
+                )
+                state.is_insolvent = True
 
     def _withdraw_from_source(self, source, withdrawal: Decimal) -> None:
         """Execute withdrawal according to the source's strategy."""
@@ -105,10 +114,12 @@ class ReconcilePlugin(Plugin):
     def _withdraw_pro_rata(self, source, withdrawal: Decimal) -> None:
         """Withdraw proportionally from cost basis and growth."""
         if source.capital_total <= ZERO:
-            return
-        ratio = withdrawal / source.capital_total
-        basis_reduction = source.capital_cost_basis * ratio
-        growth_reduction = source.capital_growth_accumulated * ratio
+            basis_reduction = withdrawal
+            growth_reduction = ZERO
+        else:
+            ratio = withdrawal / source.capital_total
+            basis_reduction = source.capital_cost_basis * ratio
+            growth_reduction = source.capital_growth_accumulated * ratio
 
         source.capital_cost_basis -= basis_reduction
         source.capital_growth_accumulated -= growth_reduction

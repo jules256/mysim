@@ -12,6 +12,7 @@ from typing import Any
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, numbers
+from openpyxl.utils import get_column_letter
 
 
 def generate_csv(results: list[dict[str, Any]], scenario_name: str) -> tuple[str, str]:
@@ -100,7 +101,8 @@ def generate_xlsx(
 
     # Auto-width columns
     for col_idx, key in enumerate(all_keys, 1):
-        ws.column_dimensions[chr(64 + min(col_idx, 26))].width = max(len(key) + 2, 14)
+        letter = get_column_letter(col_idx)
+        ws.column_dimensions[letter].width = max(len(key) + 2, 14)
 
     xlsx_bytes = _workbook_to_bytes(wb)
     return filename, xlsx_bytes

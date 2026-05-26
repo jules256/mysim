@@ -108,9 +108,8 @@ class GermanTaxInsurancePlugin(Plugin):
     def _compute_taxable_income(self, state: SimulationState) -> Decimal:
         """Compute total taxable income from inflows."""
         taxable = ZERO
-        for key, entry in state.inflows.items():
-            # Skip tax-free inflows (events marked as tax_free)
-            if "tax_free" in key:
+        for entry in state.inflows.values():
+            if entry.is_tax_free:
                 continue
             taxable += entry.value
         return taxable
