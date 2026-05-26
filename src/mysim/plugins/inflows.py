@@ -32,12 +32,17 @@ class InflowPlugin(Plugin):
     def execute(self, state: SimulationState, hook: HookType) -> SimulationState:
         trackers = self._config.generic_trackers
 
+        # Move carried-over inflows (e.g., realized gains from previous year's reconciliation)
+        for key, entry in state.carried_over_inflows.items():
+            state.inflows[key] = entry
+        state.carried_over_inflows = {}
+
         # Process pensions
         for pension in trackers.pensions:
             if state.year >= pension.start_year:
                 # Calculate inflation-adjusted amount based on years since start
-                # Starting from the first year of pension
-                years_elapsed = state.year - pension.start_year + 1
+                # Starting with base amount in the first year
+                years_elapsed = state.year - pension.start_year
                 amount = pension.amount * (
                     (Decimal("1") + pension.yearly_increase_rate) ** years_elapsed
                 )
@@ -54,7 +59,9 @@ class InflowPlugin(Plugin):
                     amount = Decimal(str(event.parameters["amount"]))
                     key = f"event_{event.label.lower().replace(' ', '_')}"
                     state.inflows[key] = LedgerEntry(
-                        value=amount, label=event.label
+                        value=amount,
+                        label=event.label,
+                        is_tax_free=event.parameters.get("type") == "tax_free",
                     )
 
         return state

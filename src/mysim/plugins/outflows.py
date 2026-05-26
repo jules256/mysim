@@ -30,17 +30,8 @@ class OutflowPlugin(Plugin):
         sim_start_year = self._config.simulation.start_year or 2026
 
         # Calculate inflation-adjusted amount based on years since start
-        # Inflation was already applied to state.inflation_rate,
-        # but here we need the cumulative effect since the start of the simulation.
-        # SRS says: "Inflation: Applied at the beginning of the cycle to raw inputs and recurring financial trackers."
-        # This implies it's cumulative.
-        years_elapsed = state.year - sim_start_year + 1 # +1 because inflation applies to first year too according to current impl but let's re-read SRS
-        # SRS 1.2: 1. Inflation: Applied at the beginning of the cycle to raw inputs and recurring financial trackers.
-        # If year 2026 is the first year, and inflation is 2%, then 2026 values should be base * 1.02?
-        # The previous implementation was:
-        # self._fixed_costs = trackers.fixed_costs_living (initially)
-        # every year: self._fixed_costs = self._fixed_costs * (1 + state.inflation_rate)
-        # So in year 1, it becomes base * (1 + rate).
+        # Starting with base amount in the first year
+        years_elapsed = state.year - sim_start_year
 
         cumulative_inflation = (Decimal("1") + state.inflation_rate) ** years_elapsed
 

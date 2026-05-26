@@ -59,6 +59,7 @@ class ReconcilePlugin(Plugin):
         """Cover a cashflow shortfall by withdrawing from capital sources."""
         remaining = shortfall
 
+        # Step 1: Exhaust all positive capital across all sources in withdrawal order
         for account_key in state.capital_withdrawal_order:
             if remaining <= ZERO:
                 break
@@ -70,8 +71,7 @@ class ReconcilePlugin(Plugin):
             if source.capital_total <= ZERO:
                 continue
 
-            available = source.capital_total
-            withdrawal = min(remaining, available)
+            withdrawal = min(remaining, source.capital_total)
 
             self._withdraw_from_source(state, account_key, source, withdrawal)
             remaining -= withdrawal
@@ -83,14 +83,31 @@ class ReconcilePlugin(Plugin):
                 remaining,
             )
 
+        # Step 2: If shortfall remains and allow_negative_capital is enabled, record as debt
         if remaining > ZERO:
-            # Insolvency: could not cover shortfall
-            logger.warning(
-                "Insolvency in year %d: uncovered shortfall of %s",
-                state.year,
-                remaining,
-            )
-            state.is_insolvent = True
+            if state.allow_negative_capital:
+                # Add debt to the first available capital source (or the first in withdrawal order)
+                target_key = state.capital_withdrawal_order[0] if state.capital_withdrawal_order else None
+                if target_key and target_key in state.capital_sources:
+                    source = state.capital_sources[target_key]
+                    source.capital_total -= remaining
+                    # Debt is usually all cost basis reduction (liability)
+                    source.capital_cost_basis -= remaining
+                    logger.warning(
+                        "Incurred debt of %s in account '%s' for year %d",
+                        remaining,
+                        target_key,
+                        state.year,
+                    )
+                    remaining = ZERO
+
+            if remaining > ZERO:
+                logger.warning(
+                    "Insolvency in year %d: uncovered shortfall of %s",
+                    state.year,
+                    remaining,
+                )
+                state.is_insolvent = True
 
     def _withdraw_from_source(self, state: SimulationState, account_key: str, source, withdrawal: Decimal) -> None:
         """Execute withdrawal according to the source's strategy."""
@@ -105,8 +122,10 @@ class ReconcilePlugin(Plugin):
 
         if realized_gain > ZERO:
             # Use the account_key (config key) for the dictionary key to ensure lookup success in tax plugin
+            # Store in carried_over_inflows because reconciliation happens AFTER tax calculation.
+            # This will be picked up by the InflowPlugin in the NEXT simulation year.
             key = f"realized_gain_{account_key}"
-            state.inflows[key] = LedgerEntry(
+            state.carried_over_inflows[key] = LedgerEntry(
                 value=realized_gain,
                 label=f"Realisierter Gewinn ({source.label})",
                 is_cash_flow=False  # Crucial: already exists in asset pool
@@ -115,10 +134,12 @@ class ReconcilePlugin(Plugin):
     def _withdraw_pro_rata(self, state: SimulationState, source, withdrawal: Decimal) -> Decimal:
         """Withdraw proportionally from cost basis and growth. Returns realized gain."""
         if source.capital_total <= ZERO:
-            return ZERO
-        ratio = withdrawal / source.capital_total
-        basis_reduction = state.round_decimal(source.capital_cost_basis * ratio)
-        growth_reduction = withdrawal - basis_reduction
+            basis_reduction = withdrawal
+            growth_reduction = ZERO
+        else:
+            ratio = withdrawal / source.capital_total
+            basis_reduction = state.round_decimal(source.capital_cost_basis * ratio)
+            growth_reduction = withdrawal - basis_reduction
 
         source.capital_cost_basis -= basis_reduction
         source.capital_growth_accumulated -= growth_reduction

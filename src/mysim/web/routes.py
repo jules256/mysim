@@ -31,7 +31,7 @@ from mysim.plugins.outflows import OutflowPlugin
 from mysim.plugins.pre_tax_summary import PreTaxSummaryPlugin
 from mysim.plugins.reconcile import ReconcilePlugin
 from mysim.web.exports import cleanup_old_exports, generate_csv, generate_xlsx
-from mysim.web.security import rate_limited, validate_scenario_name
+from mysim.web.security import SCENARIO_NAME_PATTERN, rate_limited, validate_scenario_name
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +75,6 @@ def _list_scenarios() -> list[str]:
     for f in sorted(scenarios_dir.iterdir()):
         if f.suffix == ".yaml" and f.stat().st_size <= current_app.config["MAX_YAML_SIZE"]:
             name = f.stem
-            # Validate name format
-            from mysim.web.security import SCENARIO_NAME_PATTERN
             if SCENARIO_NAME_PATTERN.match(name) and len(name) <= 64:
                 scenarios.append(name)
     return scenarios
@@ -102,7 +100,7 @@ def _extract_simple_params(data: dict) -> dict[str, Any]:
     simple = {}
     sim = data.get("simulation", {})
     for key in ("birth_year", "start_year", "end_year", "baseline_inflation_rate",
-                "insolvency_policy"):
+                "insolvency_policy", "allow_negative_capital"):
         if key in sim:
             simple[f"simulation.{key}"] = sim[key]
 

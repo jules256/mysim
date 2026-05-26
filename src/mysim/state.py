@@ -18,6 +18,7 @@ class LedgerEntry:
     value: Decimal
     label: str  # German presentation label
     is_cash_flow: bool = True  # Whether this entry represents actual liquid cash movement
+    is_tax_free: bool = False
 
 
 @dataclass
@@ -63,6 +64,9 @@ class SimulationState:
     outflows: dict[str, LedgerEntry] = field(default_factory=dict)
     deductions: dict[str, LedgerEntry] = field(default_factory=dict)
 
+    # Inflows that are generated at the end of a year and should be taxed in the next year
+    carried_over_inflows: dict[str, LedgerEntry] = field(default_factory=dict)
+
     # Summary metrics (computed during pipeline)
     total_inflows: Decimal = ZERO
     total_outflows: Decimal = ZERO
@@ -71,6 +75,9 @@ class SimulationState:
 
     # Insolvency flag
     is_insolvent: bool = False
+
+    # Allow negative capital when explicitly enabled in configuration
+    allow_negative_capital: bool = False
 
     # Derivation traces for auditability
     traces: list[dict[str, Any]] = field(default_factory=list)

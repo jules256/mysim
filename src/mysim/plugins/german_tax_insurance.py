@@ -115,8 +115,10 @@ class GermanTaxInsurancePlugin(Plugin):
         """Compute total taxable income from inflows."""
         taxable = ZERO
         for key, entry in state.inflows.items():
-            # Skip tax-free inflows (events marked as tax_free)
-            if "tax_free" in key:
+            if entry.is_tax_free:
+                continue
+            # Skip realized gains (taxed separately via capital gains tax)
+            if key.startswith("realized_gain_"):
                 continue
             taxable += entry.value
         return taxable

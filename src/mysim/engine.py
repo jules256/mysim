@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -41,6 +42,10 @@ class SimulationEngine:
             for dep_name in plugin.depends_on():
                 if dep_name in plugin_map:
                     visit(plugin_map[dep_name])
+                else:
+                    raise ValueError(
+                        f"Plugin '{plugin.name()}' depends on unknown plugin '{dep_name}'"
+                    )
             sorted_plugins.append(plugin)
 
         # Sort by priority first, then apply dependency resolution
@@ -53,7 +58,7 @@ class SimulationEngine:
     def _build_initial_state(self) -> SimulationState:
         """Build the initial SimulationState from configuration."""
         sim = self.config.simulation
-        start_year = sim.start_year or 2026
+        start_year = sim.start_year or date.today().year
         age = start_year - sim.birth_year
 
         capital_sources: dict[str, CapitalSource] = {}
@@ -78,6 +83,7 @@ class SimulationEngine:
             inflation_rate=sim.baseline_inflation_rate,
             capital_sources=capital_sources,
             capital_withdrawal_order=withdrawal_order,
+            allow_negative_capital=sim.allow_negative_capital,
             debug=sim.debug,
         )
 
