@@ -65,6 +65,7 @@ class SimulationEngine:
                 capital_growth_accumulated=src_cfg.capital_growth_accumulated,
                 capital_growth_rate=src_cfg.capital_growth_rate,
                 withdrawal_strategy=src_cfg.withdrawal_strategy,
+                is_equity_fund=src_cfg.is_equity_fund,
             )
 
         withdrawal_order = sim.capital_withdrawal_order or list(

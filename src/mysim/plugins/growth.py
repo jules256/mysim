@@ -26,7 +26,9 @@ class GrowthPlugin(Plugin):
             if source.capital_total <= ZERO:
                 continue
 
-            growth_amount = source.capital_total * source.capital_growth_rate
+            growth_amount = state.round_decimal(
+                source.capital_total * source.capital_growth_rate
+            )
 
             source.capital_growth_accumulated += growth_amount
             source.capital_total += growth_amount

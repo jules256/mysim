@@ -7,6 +7,8 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
+import base64
+import zlib
 import yaml
 from flask import (
     Blueprint,
@@ -37,6 +39,27 @@ bp = Blueprint("main", __name__)
 
 
 # --- Helper functions ---
+
+
+def _encode_config(data: dict) -> str:
+    """Encode config dict as compressed base64 string for URL persistence."""
+    yaml_str = yaml.dump(data)
+    compressed = zlib.compress(yaml_str.encode("utf-8"))
+    return base64.urlsafe_b64encode(compressed).decode("ascii")
+
+
+def _decode_config(encoded: str) -> dict:
+    """Decode compressed base64 string back to config dict."""
+    try:
+        compressed = base64.urlsafe_b64decode(encoded.encode("ascii"))
+        yaml_str = zlib.decompress(compressed).decode("utf-8")
+        data = yaml.safe_load(yaml_str)
+        if not isinstance(data, dict):
+            raise ValueError("Root must be a mapping")
+        return data
+    except Exception as e:
+        logger.error("Failed to decode config from URL: %s", e)
+        abort(400, description="Ungültiger Konfigurationsstatus in der URL.")
 
 
 def _get_scenarios_dir() -> Path:
@@ -179,9 +202,9 @@ def _coerce_value(value: str) -> Any:
     except ValueError:
         pass
     try:
-        # Keep as string for Decimal handling by Pydantic
+        # Keep as string for Decimal handling by Pydantic to avoid float precision issues
         Decimal(value)
-        return float(value)
+        return value
     except (InvalidOperation, ValueError):
         pass
     return value
@@ -231,7 +254,12 @@ def index():
 def configure(name: str):
     """Configuration view - editable form for scenario parameters."""
     name = validate_scenario_name(name)
-    data = _load_scenario_yaml(name)
+
+    encoded_cfg = request.args.get("cfg")
+    if encoded_cfg:
+        data = _decode_config(encoded_cfg)
+    else:
+        data = _load_scenario_yaml(name)
 
     simple_params = _extract_simple_params(data)
     complex_params = _extract_complex_params(data)
@@ -254,9 +282,9 @@ def run_simulation(name: str):
     # Apply form mutations
     data = _apply_form_mutations(data, request.form)
 
-    # Validate configuration
+    # Validate configuration (early check before redirect)
     try:
-        config = AppConfig(**data)
+        AppConfig(**data)
     except Exception as e:
         logger.error("Configuration error for scenario '%s': %s", name, e)
         return render_template(
@@ -266,12 +294,30 @@ def run_simulation(name: str):
             scenario_name=name,
         ), 400
 
-    # Enable debug for traces
-    config.simulation.debug = True
+    # Encode mutated data into URL
+    encoded_cfg = _encode_config(data)
+
+    # Get column selection from form
+    cols = request.form.get("cols", "")
+    return redirect(url_for("main.results", name=name, cfg=encoded_cfg, cols=cols))
+
+
+@bp.route("/scenario/<name>/results")
+def results(name: str):
+    """Results view - displays simulation output table (PRG: GET step)."""
+    name = validate_scenario_name(name)
+
+    encoded_cfg = request.args.get("cfg")
+    if not encoded_cfg:
+        return redirect(url_for("main.configure", name=name))
+
+    data = _decode_config(encoded_cfg)
 
     # Run simulation
     try:
-        results = _run_simulation(config)
+        config = AppConfig(**data)
+        config.simulation.debug = True
+        sim_results = _run_simulation(config)
     except Exception as e:
         logger.error("Simulation failed for scenario '%s': %s", name, e)
         return render_template(
@@ -280,28 +326,6 @@ def run_simulation(name: str):
             error_message=str(e),
             scenario_name=name,
         ), 500
-
-    # Store results transiently via URL params (redirect to GET view)
-    # For simplicity, store in app-level cache keyed by scenario name
-    # (single-user assumption per spec)
-    current_app.config.setdefault("_results_cache", {})
-    current_app.config["_results_cache"][name] = results
-
-    # Get column selection from form
-    cols = request.form.get("cols", "")
-    return redirect(url_for("main.results", name=name, cols=cols))
-
-
-@bp.route("/scenario/<name>/results")
-def results(name: str):
-    """Results view - displays simulation output table (PRG: GET step)."""
-    name = validate_scenario_name(name)
-
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
-
-    if sim_results is None:
-        return redirect(url_for("main.configure", name=name))
 
     # Column selection from URL params
     cols_param = request.args.get("cols", "")
@@ -317,6 +341,7 @@ def results(name: str):
         all_columns=all_columns,
         active_columns=active_columns,
         cols_param=cols_param,
+        encoded_cfg=encoded_cfg,
     )
 
 
@@ -325,11 +350,18 @@ def get_trace(name: str, year: int):
     """AJAX endpoint for lazy-loading derivation traces."""
     name = validate_scenario_name(name)
 
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
+    encoded_cfg = request.args.get("cfg")
+    if not encoded_cfg:
+        abort(400, description="No configuration provided.")
 
-    if sim_results is None:
-        abort(404, description="No simulation results available.")
+    data = _decode_config(encoded_cfg)
+
+    try:
+        config = AppConfig(**data)
+        config.simulation.debug = True
+        sim_results = _run_simulation(config)
+    except Exception:
+        abort(500, description="Failed to re-run simulation for trace.")
 
     # Find the trace for the requested year
     for row in sim_results:
@@ -351,11 +383,16 @@ def export_csv(name: str):
     """Export simulation results as CSV."""
     name = validate_scenario_name(name)
 
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
+    encoded_cfg = request.args.get("cfg")
+    if not encoded_cfg:
+        abort(404, description="No simulation results available.")
 
-    if sim_results is None:
-        abort(404, description="No simulation results available. Run the simulation first.")
+    data = _decode_config(encoded_cfg)
+    try:
+        config = AppConfig(**data)
+        sim_results = _run_simulation(config)
+    except Exception:
+        abort(500, description="Failed to re-run simulation for export.")
 
     filename, content = generate_csv(sim_results, name)
 
@@ -379,11 +416,16 @@ def export_xlsx(name: str):
     """Export simulation results as XLSX."""
     name = validate_scenario_name(name)
 
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
+    encoded_cfg = request.args.get("cfg")
+    if not encoded_cfg:
+        abort(404, description="No simulation results available.")
 
-    if sim_results is None:
-        abort(404, description="No simulation results available. Run the simulation first.")
+    data = _decode_config(encoded_cfg)
+    try:
+        config = AppConfig(**data)
+        sim_results = _run_simulation(config)
+    except Exception:
+        abort(500, description="Failed to re-run simulation for export.")
 
     include_traces = request.args.get("traces", "0") == "1"
     filename, xlsx_bytes = generate_xlsx(sim_results, name, include_traces=include_traces)

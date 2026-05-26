@@ -72,9 +72,15 @@ class GermanTaxInsurancePlugin(Plugin):
                 value=soli, label="Solidaritätszuschlag"
             )
 
-        # Capital gains tax (on realized gains only - approximated as zero in base flow)
-        # In reconciliation, realized gains would trigger this; for now placeholder
-        # This is activated when withdrawals generate realized gains
+        # Capital gains tax (on realized gains only)
+        # These are injected by the reconciliation plugin or other inflow sources
+        # We also need to handle the German 'Teilfreistellung' (tax exemption)
+        # and 'Sparer-Pauschbetrag'.
+        cap_gains_tax = self._calculate_capital_gains_tax(state, cfg)
+        if cap_gains_tax > ZERO:
+            state.deductions["capital_gains_tax"] = LedgerEntry(
+                value=cap_gains_tax, label="Abgeltungsteuer"
+            )
 
         # Health insurance (GKV)
         gkv = self._calculate_gkv(state, cfg)
@@ -122,29 +128,28 @@ class GermanTaxInsurancePlugin(Plugin):
         grundfreibetrag = cfg.grundfreibetrag
         is_married = cfg.income_tax_filing_status == "married"
 
-        # Apply splitting for married (Zusammenveranlagung)
+        # Apply splitting for married (Zusammenveranlagung):
+        # 1. Half the income
+        # 2. Apply single Grundfreibetrag and progressive formula
+        # 3. Double the resulting tax
         if is_married:
-            grundfreibetrag *= TWO
             splitting_income = taxable_income / TWO
         else:
             splitting_income = taxable_income
 
-        # Apply Grundfreibetrag
-        if is_married:
-            effective_taxable = taxable_income - grundfreibetrag
-        else:
-            effective_taxable = taxable_income - grundfreibetrag
+        # Effective taxable income after Grundfreibetrag
+        effective_taxable = splitting_income - grundfreibetrag
 
         if effective_taxable <= ZERO:
             return ZERO
 
-        # Simplified German progressive tax calculation
-        # Using splitting methodology: calculate tax on half, then double
+        # Progressive formula on the splitting income
+        single_tax = self._progressive_formula(effective_taxable)
+
         if is_married:
-            single_tax = self._progressive_formula(splitting_income - (grundfreibetrag / TWO))
             total_tax = single_tax * TWO
         else:
-            total_tax = self._progressive_formula(effective_taxable)
+            total_tax = single_tax
 
         return total_tax.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -229,6 +234,60 @@ class GermanTaxInsurancePlugin(Plugin):
             gkv = contribution_base * total_rate
 
         return gkv.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    def _calculate_capital_gains_tax(
+        self, state: SimulationState, cfg: GermanPluginConfig
+    ) -> Decimal:
+        """Calculate German capital gains tax (Abgeltungsteuer)."""
+        # Collect realized gains from inflows
+        total_realized_gain = ZERO
+        taxable_realized_gain = ZERO
+
+        # We need to distinguish between equity funds (Teilfreistellung) and other gains
+        # The reconcile plugin uses labels like "Realisierter Gewinn (Account Label)"
+        # and keys like "realized_gain_account_key"
+
+        # Track applied Sparer-Pauschbetrag
+        remaining_pauschbetrag = cfg.sparer_pauschbetrag
+        if cfg.income_tax_filing_status == "married":
+            remaining_pauschbetrag *= TWO
+
+        # Sort gains to apply pauschbetrag efficiently (though doesn't strictly matter for flat tax)
+        # However, SRS says: "Apply sparer_pauschbetrag first to capital gains, then apply teilfreistellung on the remaining taxable amount."
+        # This interaction is important.
+
+        for key, entry in state.inflows.items():
+            if not key.startswith("realized_gain_"):
+                continue
+
+            gain = entry.value
+            if gain <= ZERO:
+                continue
+
+            # Check if this gain comes from an equity fund
+            is_equity = False
+            # Find the capital source by looking up the key suffix
+            source_key = key[len("realized_gain_"):]
+            if source_key in state.capital_sources:
+                is_equity = state.capital_sources[source_key].is_equity_fund
+
+            # 1. Apply Sparer-Pauschbetrag
+            applicable_pausch = min(gain, remaining_pauschbetrag)
+            gain_after_pausch = gain - applicable_pausch
+            remaining_pauschbetrag -= applicable_pausch
+
+            # 2. Apply Teilfreistellung for equity funds
+            if is_equity and gain_after_pausch > ZERO:
+                gain_after_pausch *= (ONE - cfg.stock_fund_tax_exempt_rate)
+
+            taxable_realized_gain += gain_after_pausch
+
+        if taxable_realized_gain <= ZERO:
+            return ZERO
+
+        # Apply flat tax rate (standard 25%)
+        tax = taxable_realized_gain * cfg.fixed_capital_gains_tax_rate
+        return tax.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     def _calculate_pv(
         self, state: SimulationState, cfg: GermanPluginConfig

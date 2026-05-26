@@ -73,7 +73,7 @@ class ReconcilePlugin(Plugin):
             available = source.capital_total
             withdrawal = min(remaining, available)
 
-            self._withdraw_from_source(source, withdrawal)
+            self._withdraw_from_source(state, account_key, source, withdrawal)
             remaining -= withdrawal
 
             logger.debug(
@@ -92,46 +92,63 @@ class ReconcilePlugin(Plugin):
             )
             state.is_insolvent = True
 
-    def _withdraw_from_source(self, source, withdrawal: Decimal) -> None:
+    def _withdraw_from_source(self, state: SimulationState, account_key: str, source, withdrawal: Decimal) -> None:
         """Execute withdrawal according to the source's strategy."""
+        realized_gain = ZERO
         if source.withdrawal_strategy == "pro-rata":
-            self._withdraw_pro_rata(source, withdrawal)
+            realized_gain = self._withdraw_pro_rata(state, source, withdrawal)
         elif source.withdrawal_strategy == "gain-first":
-            self._withdraw_gain_first(source, withdrawal)
+            realized_gain = self._withdraw_gain_first(state, source, withdrawal)
         else:
             # Default to FIFO approximation (aggregate mode)
-            self._withdraw_fifo(source, withdrawal)
+            realized_gain = self._withdraw_fifo(state, source, withdrawal)
 
-    def _withdraw_pro_rata(self, source, withdrawal: Decimal) -> None:
-        """Withdraw proportionally from cost basis and growth."""
+        if realized_gain > ZERO:
+            # Use the account_key (config key) for the dictionary key to ensure lookup success in tax plugin
+            key = f"realized_gain_{account_key}"
+            state.inflows[key] = LedgerEntry(
+                value=realized_gain,
+                label=f"Realisierter Gewinn ({source.label})",
+                is_cash_flow=False  # Crucial: already exists in asset pool
+            )
+
+    def _withdraw_pro_rata(self, state: SimulationState, source, withdrawal: Decimal) -> Decimal:
+        """Withdraw proportionally from cost basis and growth. Returns realized gain."""
         if source.capital_total <= ZERO:
-            return
+            return ZERO
         ratio = withdrawal / source.capital_total
-        basis_reduction = source.capital_cost_basis * ratio
-        growth_reduction = source.capital_growth_accumulated * ratio
+        basis_reduction = state.round_decimal(source.capital_cost_basis * ratio)
+        growth_reduction = withdrawal - basis_reduction
 
         source.capital_cost_basis -= basis_reduction
         source.capital_growth_accumulated -= growth_reduction
         source.capital_total -= withdrawal
+        return growth_reduction
 
-    def _withdraw_gain_first(self, source, withdrawal: Decimal) -> None:
-        """Withdraw from growth first, then cost basis."""
+    def _withdraw_gain_first(self, state: SimulationState, source, withdrawal: Decimal) -> Decimal:
+        """Withdraw from growth first, then cost basis. Returns realized gain."""
+        realized_gain = ZERO
         if withdrawal <= source.capital_growth_accumulated:
             source.capital_growth_accumulated -= withdrawal
+            realized_gain = withdrawal
         else:
+            realized_gain = source.capital_growth_accumulated
             remainder = withdrawal - source.capital_growth_accumulated
             source.capital_growth_accumulated = ZERO
             source.capital_cost_basis -= remainder
 
         source.capital_total -= withdrawal
+        return realized_gain
 
-    def _withdraw_fifo(self, source, withdrawal: Decimal) -> None:
-        """FIFO approximation in aggregate mode: withdraw from cost basis first."""
+    def _withdraw_fifo(self, state: SimulationState, source, withdrawal: Decimal) -> Decimal:
+        """FIFO approximation in aggregate mode: withdraw from cost basis first. Returns realized gain."""
+        realized_gain = ZERO
         if withdrawal <= source.capital_cost_basis:
             source.capital_cost_basis -= withdrawal
         else:
-            remainder = withdrawal - source.capital_cost_basis
+            realized_gain = withdrawal - source.capital_cost_basis
             source.capital_cost_basis = ZERO
-            source.capital_growth_accumulated -= remainder
+            source.capital_growth_accumulated -= realized_gain
 
         source.capital_total -= withdrawal
+        return realized_gain

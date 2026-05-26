@@ -11,9 +11,9 @@
     <header class="results-header">
         <h1>Ergebnisse: {{ scenario_name }}</h1>
         <div class="results-actions">
-            <a href="{{ url_for('main.configure', name=scenario_name) }}" class="btn btn-secondary">Konfiguration</a>
-            <a href="{{ url_for('main.export_csv', name=scenario_name) }}" class="btn btn-secondary">CSV Export</a>
-            <a href="{{ url_for('main.export_xlsx', name=scenario_name) }}" class="btn btn-secondary">XLSX Export</a>
+            <a href="{{ url_for('main.configure', name=scenario_name, cfg=encoded_cfg) }}" class="btn btn-secondary">Konfiguration</a>
+            <a href="{{ url_for('main.export_csv', name=scenario_name, cfg=encoded_cfg) }}" class="btn btn-secondary">CSV Export</a>
+            <a href="{{ url_for('main.export_xlsx', name=scenario_name, cfg=encoded_cfg) }}" class="btn btn-secondary">XLSX Export</a>
             <button type="button" class="btn btn-secondary" onclick="window.print()">Drucken</button>
         </div>
     </header>
@@ -22,6 +22,7 @@
     <details class="column-selector js-only" id="column-selector">
         <summary>Spaltenauswahl</summary>
         <form method="GET" action="{{ url_for('main.results', name=scenario_name) }}" id="cols-form">
+            <input type="hidden" name="cfg" value="{{ encoded_cfg }}">
             <div class="column-checkboxes">
                 {% for col in all_columns %}
                 <label class="column-checkbox">
@@ -66,7 +67,7 @@
                     </td>
                     {% endfor %}
                     <td class="trace-col">
-                        <details class="trace-accordion" data-year="{{ row.year }}" data-scenario="{{ scenario_name }}">
+                        <details class="trace-accordion" data-year="{{ row.year }}" data-scenario="{{ scenario_name }}" data-cfg="{{ encoded_cfg }}">
                             <summary>Trace</summary>
                             <div class="trace-content" aria-live="polite">
                                 <p class="loading-indicator">Lade...</p>

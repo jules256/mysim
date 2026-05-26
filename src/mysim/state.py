@@ -17,6 +17,7 @@ class LedgerEntry:
 
     value: Decimal
     label: str  # German presentation label
+    is_cash_flow: bool = True  # Whether this entry represents actual liquid cash movement
 
 
 @dataclass
@@ -29,6 +30,7 @@ class CapitalSource:
     capital_growth_accumulated: Decimal
     capital_growth_rate: Decimal
     withdrawal_strategy: str  # "fifo", "pro-rata", "gain-first"
+    is_equity_fund: bool = False  # For German Teilfreistellung
 
     def enforce_invariant(self) -> None:
         """Enforce capital_total == capital_cost_basis + capital_growth_accumulated."""
@@ -82,13 +84,13 @@ class SimulationState:
     def compute_summaries(self) -> None:
         """Recompute summary totals from ledger maps."""
         self.total_inflows = sum(
-            (e.value for e in self.inflows.values()), ZERO
+            (e.value for e in self.inflows.values() if e.is_cash_flow), ZERO
         )
         self.total_outflows = sum(
-            (e.value for e in self.outflows.values()), ZERO
+            (e.value for e in self.outflows.values() if e.is_cash_flow), ZERO
         )
         self.total_deductions = sum(
-            (e.value for e in self.deductions.values()), ZERO
+            (e.value for e in self.deductions.values() if e.is_cash_flow), ZERO
         )
         self.net_annual_result = (
             self.total_inflows - self.total_outflows - self.total_deductions

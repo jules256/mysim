@@ -15,8 +15,6 @@ class OutflowPlugin(Plugin):
 
     def __init__(self, config: AppConfig) -> None:
         self._config = config
-        self._fixed_costs: Decimal | None = None
-        self._pocket_money: Decimal | None = None
 
     def name(self) -> str:
         return "outflow_tracker"
@@ -29,27 +27,35 @@ class OutflowPlugin(Plugin):
 
     def execute(self, state: SimulationState, hook: HookType) -> SimulationState:
         trackers = self._config.generic_trackers
+        sim_start_year = self._config.simulation.start_year or 2026
 
-        # Initialize on first run
-        if self._fixed_costs is None:
-            self._fixed_costs = trackers.fixed_costs_living
-        if self._pocket_money is None:
-            self._pocket_money = trackers.pocket_money
+        # Calculate inflation-adjusted amount based on years since start
+        # Inflation was already applied to state.inflation_rate,
+        # but here we need the cumulative effect since the start of the simulation.
+        # SRS says: "Inflation: Applied at the beginning of the cycle to raw inputs and recurring financial trackers."
+        # This implies it's cumulative.
+        years_elapsed = state.year - sim_start_year + 1 # +1 because inflation applies to first year too according to current impl but let's re-read SRS
+        # SRS 1.2: 1. Inflation: Applied at the beginning of the cycle to raw inputs and recurring financial trackers.
+        # If year 2026 is the first year, and inflation is 2%, then 2026 values should be base * 1.02?
+        # The previous implementation was:
+        # self._fixed_costs = trackers.fixed_costs_living (initially)
+        # every year: self._fixed_costs = self._fixed_costs * (1 + state.inflation_rate)
+        # So in year 1, it becomes base * (1 + rate).
 
-        # Apply inflation adjustment
-        inflation_factor = Decimal("1") + state.inflation_rate
-        self._fixed_costs = self._fixed_costs * inflation_factor
-        self._pocket_money = self._pocket_money * inflation_factor
+        cumulative_inflation = (Decimal("1") + state.inflation_rate) ** years_elapsed
+
+        fixed_costs = state.round_decimal(trackers.fixed_costs_living * cumulative_inflation)
+        pocket_money = state.round_decimal(trackers.pocket_money * cumulative_inflation)
 
         # Register outflows
-        if self._fixed_costs > ZERO:
+        if fixed_costs > ZERO:
             state.outflows["fixed_costs_living"] = LedgerEntry(
-                value=self._fixed_costs, label="Lebenshaltungskosten"
+                value=fixed_costs, label="Lebenshaltungskosten"
             )
 
-        if self._pocket_money > ZERO:
+        if pocket_money > ZERO:
             state.outflows["pocket_money"] = LedgerEntry(
-                value=self._pocket_money, label="Taschengeld"
+                value=pocket_money, label="Taschengeld"
             )
 
         return state
