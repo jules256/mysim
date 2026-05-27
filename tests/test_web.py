@@ -81,7 +81,12 @@ def test_web_routes_workflow(tmp_path: Path):
     assert response.status_code == 200
     assert "Ergebnisse" in response.get_data(as_text=True)
 
-    response = client.get(f"/scenario/{scenario_name}/export/csv")
+    import urllib.parse
+    parsed_url = urllib.parse.urlparse(result_location)
+    query_params = urllib.parse.parse_qs(parsed_url.query)
+    cfg = query_params.get("cfg", [None])[0]
+
+    response = client.get(f"/scenario/{scenario_name}/export/csv?cfg={cfg}")
     assert response.status_code == 200
     assert response.headers["Content-Type"].startswith("text/csv")
     assert "year" in response.get_data(as_text=True)
@@ -99,12 +104,18 @@ def test_web_export_xlsx_and_trace(tmp_path: Path):
 
     response = client.post(f"/scenario/{scenario_name}/run", data={})
     assert response.status_code == 302
+    result_location = response.headers["Location"]
 
-    response = client.get(f"/scenario/{scenario_name}/export/xlsx")
+    import urllib.parse
+    parsed_url = urllib.parse.urlparse(result_location)
+    query_params = urllib.parse.parse_qs(parsed_url.query)
+    cfg = query_params.get("cfg", [None])[0]
+
+    response = client.get(f"/scenario/{scenario_name}/export/xlsx?cfg={cfg}")
     assert response.status_code == 200
     assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in response.headers["Content-Type"]
 
-    response = client.get(f"/scenario/{scenario_name}/trace/2026")
+    response = client.get(f"/scenario/{scenario_name}/trace/2026?cfg={cfg}")
     assert response.status_code == 200
     assert "Ergebnis" in response.get_data(as_text=True)
 

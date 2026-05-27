@@ -17,6 +17,7 @@ class CapitalSourceConfig(BaseModel):
     capital_growth_accumulated: Decimal
     capital_growth_rate: Decimal = Field(ge=Decimal("-1"))
     withdrawal_strategy: Literal["fifo", "pro-rata", "gain-first"] = "pro-rata"
+    is_equity_fund: bool = False
 
     @model_validator(mode="after")
     def validate_invariant(self) -> "CapitalSourceConfig":

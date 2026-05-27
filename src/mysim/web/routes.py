@@ -21,6 +21,7 @@ from flask import (
 
 from mysim.config import AppConfig
 from mysim.engine import SimulationEngine
+from mysim.web.persistence import encode_config, decode_config
 from mysim.plugins.german_tax_insurance import GermanTaxInsurancePlugin
 from mysim.plugins.growth import GrowthPlugin
 from mysim.plugins.inflation import InflationPlugin
@@ -263,12 +264,28 @@ def run_simulation(name: str):
             scenario_name=name,
         ), 400
 
-    # Enable debug for traces
-    config.simulation.debug = True
+    # Encode config for URL persistence
+    encoded_cfg = encode_config(config)
 
-    # Run simulation
+    # Get column selection from form
+    cols = request.form.get("cols", "")
+    return redirect(url_for("main.results", name=name, cfg=encoded_cfg, cols=cols))
+
+
+@bp.route("/scenario/<name>/results")
+def results(name: str):
+    """Results view - displays simulation output table (PRG: GET step)."""
+    name = validate_scenario_name(name)
+    encoded_cfg = request.args.get("cfg")
+
+    if not encoded_cfg:
+        return redirect(url_for("main.configure", name=name))
+
     try:
-        results = _run_simulation(config)
+        config = decode_config(encoded_cfg)
+        # Enable debug for traces
+        config.simulation.debug = True
+        sim_results = _run_simulation(config)
     except Exception as e:
         logger.error("Simulation failed for scenario '%s': %s", name, e)
         return render_template(
@@ -277,28 +294,6 @@ def run_simulation(name: str):
             error_message=str(e),
             scenario_name=name,
         ), 500
-
-    # Store results transiently via URL params (redirect to GET view)
-    # For simplicity, store in app-level cache keyed by scenario name
-    # (single-user assumption per spec)
-    current_app.config.setdefault("_results_cache", {})
-    current_app.config["_results_cache"][name] = results
-
-    # Get column selection from form
-    cols = request.form.get("cols", "")
-    return redirect(url_for("main.results", name=name, cols=cols))
-
-
-@bp.route("/scenario/<name>/results")
-def results(name: str):
-    """Results view - displays simulation output table (PRG: GET step)."""
-    name = validate_scenario_name(name)
-
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
-
-    if sim_results is None:
-        return redirect(url_for("main.configure", name=name))
 
     # Column selection from URL params
     cols_param = request.args.get("cols", "")
@@ -321,12 +316,17 @@ def results(name: str):
 def get_trace(name: str, year: int):
     """AJAX endpoint for lazy-loading derivation traces."""
     name = validate_scenario_name(name)
+    encoded_cfg = request.args.get("cfg")
 
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
+    if not encoded_cfg:
+        abort(400, description="Missing configuration state.")
 
-    if sim_results is None:
-        abort(404, description="No simulation results available.")
+    try:
+        config = decode_config(encoded_cfg)
+        config.simulation.debug = True
+        sim_results = _run_simulation(config)
+    except Exception as e:
+        abort(500, description=f"Simulation failed: {e}")
 
     # Find the trace for the requested year
     for row in sim_results:
@@ -347,12 +347,16 @@ def get_trace(name: str, year: int):
 def export_csv(name: str):
     """Export simulation results as CSV."""
     name = validate_scenario_name(name)
+    encoded_cfg = request.args.get("cfg")
 
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
+    if not encoded_cfg:
+        abort(400, description="Missing configuration state.")
 
-    if sim_results is None:
-        abort(404, description="No simulation results available. Run the simulation first.")
+    try:
+        config = decode_config(encoded_cfg)
+        sim_results = _run_simulation(config)
+    except Exception as e:
+        abort(500, description=f"Simulation failed: {e}")
 
     filename, content = generate_csv(sim_results, name)
 
@@ -375,14 +379,20 @@ def export_csv(name: str):
 def export_xlsx(name: str):
     """Export simulation results as XLSX."""
     name = validate_scenario_name(name)
+    encoded_cfg = request.args.get("cfg")
 
-    cache = current_app.config.get("_results_cache", {})
-    sim_results = cache.get(name)
+    if not encoded_cfg:
+        abort(400, description="Missing configuration state.")
 
-    if sim_results is None:
-        abort(404, description="No simulation results available. Run the simulation first.")
+    try:
+        config = decode_config(encoded_cfg)
+        include_traces = request.args.get("traces", "0") == "1"
+        if include_traces:
+            config.simulation.debug = True
+        sim_results = _run_simulation(config)
+    except Exception as e:
+        abort(500, description=f"Simulation failed: {e}")
 
-    include_traces = request.args.get("traces", "0") == "1"
     filename, xlsx_bytes = generate_xlsx(sim_results, name, include_traces=include_traces)
 
     # Clean up old exports
