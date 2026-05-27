@@ -58,6 +58,7 @@ german_plugin_config:
   gkv_contribution_rate: 0.146
   gkv_additional_contribution: 0.017
   gkv_beitragsbemessungsgrenze_annual: 62100.0
+  gkv_mindestbemessungsgrundlage_annual: 14140.0
 
 events:
   - year: 2030

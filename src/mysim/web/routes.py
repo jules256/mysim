@@ -74,23 +74,47 @@ def _load_scenario_yaml(name: str) -> dict:
 
 
 def _extract_simple_params(data: dict) -> dict[str, Any]:
-    """Extract simple scalar parameters for form inputs."""
+    """Extract simple scalar parameters for form inputs, falling back to schema defaults."""
+    # Use Pydantic to fill in defaults for missing fields
+    try:
+        # Create a partial config to get default values from the model
+        # We only need the basic structure to satisfy validation
+        temp_data = {
+            "simulation": data.get("simulation", {"birth_year": 1900}),
+            "capital_sources": data.get("capital_sources", {}),
+            "generic_trackers": data.get("generic_trackers", {}),
+            "german_plugin_config": data.get("german_plugin_config", {}),
+            "events": data.get("events", [])
+        }
+        config = AppConfig(**temp_data)
+    except Exception:
+        # Fallback to raw data if validation fails (should not happen for valid scenarios)
+        config = None
+
     simple = {}
-    sim = data.get("simulation", {})
+
+    # Simulation section
+    sim_data = data.get("simulation", {})
     for key in ("birth_year", "start_year", "end_year", "baseline_inflation_rate",
                 "insolvency_policy", "allow_negative_capital"):
-        if key in sim:
-            simple[f"simulation.{key}"] = sim[key]
+        if key in sim_data:
+            simple[f"simulation.{key}"] = sim_data[key]
+        elif config:
+            simple[f"simulation.{key}"] = getattr(config.simulation, key)
 
-    german = data.get("german_plugin_config", {})
+    # German plugin section
+    german_data = data.get("german_plugin_config", {})
     for key in ("income_tax_filing_status", "confession_has_church_tax",
                 "number_of_children", "grundfreibetrag", "sparer_pauschbetrag",
                 "health_insurance_status", "gkv_contribution_rate",
                 "gkv_additional_contribution", "gkv_beitragsbemessungsgrenze_annual",
                 "gkv_mindestbemessungsgrundlage_annual"):
-        if key in german:
-            simple[f"german_plugin_config.{key}"] = german[key]
+        if key in german_data:
+            simple[f"german_plugin_config.{key}"] = german_data[key]
+        elif config:
+            simple[f"german_plugin_config.{key}"] = getattr(config.german_plugin_config, key)
 
+    # Generic trackers section
     trackers = data.get("generic_trackers", {})
     for key in ("fixed_costs_living", "pocket_money"):
         if key in trackers:
