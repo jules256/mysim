@@ -70,6 +70,7 @@ class SimulationEngine:
                 capital_growth_accumulated=src_cfg.capital_growth_accumulated,
                 capital_growth_rate=src_cfg.capital_growth_rate,
                 withdrawal_strategy=src_cfg.withdrawal_strategy,
+                is_equity_fund=src_cfg.is_equity_fund,
             )
 
         withdrawal_order = sim.capital_withdrawal_order or list(
@@ -79,6 +80,7 @@ class SimulationEngine:
         return SimulationState(
             year=start_year,
             age=age,
+            start_year=start_year,
             inflation_rate=sim.baseline_inflation_rate,
             capital_sources=capital_sources,
             capital_withdrawal_order=withdrawal_order,

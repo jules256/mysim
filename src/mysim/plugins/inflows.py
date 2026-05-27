@@ -19,9 +19,6 @@ class InflowPlugin(Plugin):
         for event in config.events:
             if event.plugin == "inflow_tracker":
                 self._events_by_year.setdefault(event.year, []).append(event)
-        # Track inflation-adjusted pension amounts
-        self._pension_amounts: dict[str, Decimal] = {}
-        self._initialized = False
 
     def name(self) -> str:
         return "inflow_tracker"
@@ -35,24 +32,17 @@ class InflowPlugin(Plugin):
     def execute(self, state: SimulationState, hook: HookType) -> SimulationState:
         trackers = self._config.generic_trackers
 
-        # Initialize pension amounts on first run
-        if not self._initialized:
-            for pension in trackers.pensions:
-                self._pension_amounts[pension.name] = pension.amount
-            self._initialized = True
-
         # Process pensions
         for pension in trackers.pensions:
             if state.year >= pension.start_year:
-                amount = self._pension_amounts[pension.name]
+                # Calculate adjusted amount: base * (1 + rate) ^ years_since_start
+                years_elapsed = state.year - pension.start_year
+                amount = pension.amount * (
+                    (Decimal("1") + pension.yearly_increase_rate) ** years_elapsed
+                )
 
                 state.inflows[pension.name] = LedgerEntry(
                     value=amount, label=pension.label
-                )
-
-                # Apply yearly increase for next year
-                self._pension_amounts[pension.name] = amount * (
-                    Decimal("1") + pension.yearly_increase_rate
                 )
 
         # Process one-time inflow events

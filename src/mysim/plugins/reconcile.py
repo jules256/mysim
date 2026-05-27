@@ -76,8 +76,18 @@ class ReconcilePlugin(Plugin):
             else:
                 withdrawal = min(remaining, source.capital_total)
 
-            self._withdraw_from_source(source, withdrawal)
+            realized_gain = self._withdraw_from_source(source, withdrawal)
             remaining -= withdrawal
+
+            # Inject realized gain into inflows for tax calculation
+            gain_key = f"realized_gain_{account_key}"
+            if gain_key in state.inflows:
+                state.inflows[gain_key].value += realized_gain
+            else:
+                state.inflows[gain_key] = LedgerEntry(
+                    value=realized_gain,
+                    label=f"Realisierter Gewinn ({source.label})",
+                )
 
             logger.debug(
                 "Withdrew %s from '%s', remaining shortfall: %s",
@@ -101,17 +111,20 @@ class ReconcilePlugin(Plugin):
                 )
                 state.is_insolvent = True
 
-    def _withdraw_from_source(self, source, withdrawal: Decimal) -> None:
-        """Execute withdrawal according to the source's strategy."""
+    def _withdraw_from_source(self, source, withdrawal: Decimal) -> Decimal:
+        """Execute withdrawal according to the source's strategy.
+
+        Returns the amount of realized gain.
+        """
         if source.withdrawal_strategy == "pro-rata":
-            self._withdraw_pro_rata(source, withdrawal)
+            return self._withdraw_pro_rata(source, withdrawal)
         elif source.withdrawal_strategy == "gain-first":
-            self._withdraw_gain_first(source, withdrawal)
+            return self._withdraw_gain_first(source, withdrawal)
         else:
             # Default to FIFO approximation (aggregate mode)
-            self._withdraw_fifo(source, withdrawal)
+            return self._withdraw_fifo(source, withdrawal)
 
-    def _withdraw_pro_rata(self, source, withdrawal: Decimal) -> None:
+    def _withdraw_pro_rata(self, source, withdrawal: Decimal) -> Decimal:
         """Withdraw proportionally from cost basis and growth."""
         if source.capital_total <= ZERO:
             basis_reduction = withdrawal
@@ -124,25 +137,31 @@ class ReconcilePlugin(Plugin):
         source.capital_cost_basis -= basis_reduction
         source.capital_growth_accumulated -= growth_reduction
         source.capital_total -= withdrawal
+        return growth_reduction
 
-    def _withdraw_gain_first(self, source, withdrawal: Decimal) -> None:
+    def _withdraw_gain_first(self, source, withdrawal: Decimal) -> Decimal:
         """Withdraw from growth first, then cost basis."""
         if withdrawal <= source.capital_growth_accumulated:
+            realized_gain = withdrawal
             source.capital_growth_accumulated -= withdrawal
         else:
+            realized_gain = source.capital_growth_accumulated
             remainder = withdrawal - source.capital_growth_accumulated
             source.capital_growth_accumulated = ZERO
             source.capital_cost_basis -= remainder
 
         source.capital_total -= withdrawal
+        return realized_gain
 
-    def _withdraw_fifo(self, source, withdrawal: Decimal) -> None:
+    def _withdraw_fifo(self, source, withdrawal: Decimal) -> Decimal:
         """FIFO approximation in aggregate mode: withdraw from cost basis first."""
         if withdrawal <= source.capital_cost_basis:
+            realized_gain = ZERO
             source.capital_cost_basis -= withdrawal
         else:
-            remainder = withdrawal - source.capital_cost_basis
+            realized_gain = withdrawal - source.capital_cost_basis
             source.capital_cost_basis = ZERO
-            source.capital_growth_accumulated -= remainder
+            source.capital_growth_accumulated -= realized_gain
 
         source.capital_total -= withdrawal
+        return realized_gain

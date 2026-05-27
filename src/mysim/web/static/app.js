@@ -38,6 +38,10 @@
             const cols = Array.from(checked).map(function (cb) { return cb.value; });
 
             const url = new URL(colsForm.action, window.location.origin);
+            const cfg = colsForm.querySelector('input[name="cfg"]').value;
+            if (cfg) {
+                url.searchParams.set("cfg", cfg);
+            }
             if (cols.length > 0) {
                 url.searchParams.set("cols", cols.join(","));
             }
@@ -62,7 +66,8 @@
 
         var year = details.dataset.year;
         var scenario = details.dataset.scenario;
-        var url = "/scenario/" + encodeURIComponent(scenario) + "/trace/" + encodeURIComponent(year);
+        var cfg = details.dataset.cfg;
+        var url = "/scenario/" + encodeURIComponent(scenario) + "/trace/" + encodeURIComponent(year) + "?cfg=" + encodeURIComponent(cfg);
 
         fetch(url)
             .then(function (response) {

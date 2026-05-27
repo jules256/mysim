@@ -11,6 +11,7 @@ def _base_state() -> SimulationState:
     return SimulationState(
         year=2026,
         age=52,
+        start_year=2026,
         inflation_rate=Decimal("0.02"),
         capital_sources={
             "savings": CapitalSource(
@@ -20,6 +21,7 @@ def _base_state() -> SimulationState:
                 capital_growth_accumulated=Decimal("0"),
                 capital_growth_rate=Decimal("0"),
                 withdrawal_strategy="pro-rata",
+                is_equity_fund=False,
             )
         },
         inflows={

@@ -30,6 +30,7 @@ class CapitalSource:
     capital_growth_accumulated: Decimal
     capital_growth_rate: Decimal
     withdrawal_strategy: str  # "fifo", "pro-rata", "gain-first"
+    is_equity_fund: bool = False
 
     def enforce_invariant(self) -> None:
         """Enforce capital_total == capital_cost_basis + capital_growth_accumulated."""
@@ -52,6 +53,7 @@ class SimulationState:
     # Global metadata
     year: int
     age: int
+    start_year: int
     inflation_rate: Decimal
 
     # Capital accounts portfolio

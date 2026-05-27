@@ -56,10 +56,12 @@ def _make_state(config: AppConfig) -> SimulationState:
         capital_growth_accumulated=Decimal("0"),
         capital_growth_rate=Decimal("0.01"),
         withdrawal_strategy="fifo",
+            is_equity_fund=False,
     )
     return SimulationState(
         year=2026,
         age=52,
+        start_year=2026,
         inflation_rate=config.simulation.baseline_inflation_rate,
         capital_sources={"savings": source},
         inflows={"salary": LedgerEntry(value=Decimal("50000"), label="Gehalt")},
