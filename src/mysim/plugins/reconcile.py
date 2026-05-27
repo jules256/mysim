@@ -154,7 +154,12 @@ class ReconcilePlugin(Plugin):
         return realized_gain
 
     def _withdraw_fifo(self, source, withdrawal: Decimal) -> Decimal:
-        """FIFO approximation in aggregate mode: withdraw from cost basis first."""
+        """FIFO approximation in aggregate mode: withdraw from cost basis first.
+
+        NOTE: This aggregate implementation will naturally produce a discrete
+        realized-gain step when the tracked cost basis is consumed. For smoother
+        taxable cashflow, use `pro-rata` withdrawal strategy instead.
+        """
         if withdrawal <= source.capital_cost_basis:
             realized_gain = ZERO
             source.capital_cost_basis -= withdrawal

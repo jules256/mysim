@@ -1,0 +1,53 @@
+# Configuration File for "mysim"
+schema_version: 1
+engine_version: "0.1"
+
+simulation:
+  birth_year: 1974
+  start_year: 2026
+  end_year: 2074
+  baseline_inflation_rate: 0.03
+  capital_withdrawal_order:
+    - "depot"
+
+capital_sources:
+  depot:
+    label: "Kern-Depot"
+    capital_total: 900000.0
+    capital_cost_basis: 900000.0
+    capital_growth_accumulated: 0.0
+    capital_growth_rate: 0.035
+    withdrawal_strategy: "pro-rata"
+
+generic_trackers:
+  fixed_costs_living: 24000.0
+  pocket_money: 12000.0
+  pensions:
+    - name: "gesetzliche_rente"
+      label: "Gesetzliche Rente (DRV)"
+      amount: 31764.0
+      start_year: 2041
+      yearly_increase_rate: 0.015
+
+german_plugin_config:
+  income_tax_filing_status: "married"
+  confession_has_church_tax: false
+  number_of_children: 0
+  stock_fund_tax_exempt_rate: 0.21
+  fixed_capital_gains_tax_rate: 0.25375
+  sparer_pauschbetrag: 1000.0
+  grundfreibetrag: 12348.0
+  health_insurance_status: "freiwillig_versichert"
+  kvdr_9_10_rule_fulfilled: false
+  gkv_contribution_rate: 0.146
+  gkv_additional_contribution: 0.026
+  gkv_beitragsbemessungsgrenze_annual: 62100.0
+
+events:
+  - year: 2049
+    label: "Hausverkauf"
+    plugin: "inflow_tracker"
+    action: "one_time_inflow"
+    parameters:
+      amount: 400000.0
+      type: "tax_free"

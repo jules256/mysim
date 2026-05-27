@@ -13,7 +13,7 @@ from mysim.plugins.inflows import InflowPlugin
 from mysim.plugins.outflows import OutflowPlugin
 from mysim.plugins.pre_tax_summary import PreTaxSummaryPlugin
 from mysim.plugins.reconcile import ReconcilePlugin
-from mysim.state import ZERO
+from mysim.state import CapitalSource, ZERO
 
 
 def _minimal_config() -> dict:
@@ -158,6 +158,45 @@ class TestBaselineScenario:
 
         assert results[0]["total_inflows"] == Decimal("50000")
         assert results[0]["total_deductions"] == Decimal("0")
+
+    def test_pro_rata_withdrawal_avoids_fifo_gain_jump(self):
+        """Pro-rata withdrawal smooths realized gain recognition compared to FIFO."""
+        config = AppConfig(**_minimal_config())
+        plugin = ReconcilePlugin(config)
+
+        fifo_source = CapitalSource(
+            label="Sparkonto",
+            capital_total=Decimal("200000"),
+            capital_cost_basis=Decimal("50000"),
+            capital_growth_accumulated=Decimal("150000"),
+            capital_growth_rate=Decimal("0.05"),
+            withdrawal_strategy="fifo",
+        )
+        pro_rata_source = CapitalSource(
+            label="Sparkonto",
+            capital_total=Decimal("200000"),
+            capital_cost_basis=Decimal("50000"),
+            capital_growth_accumulated=Decimal("150000"),
+            capital_growth_rate=Decimal("0.05"),
+            withdrawal_strategy="pro-rata",
+        )
+
+        fifo_gains = [
+            plugin._withdraw_from_source(fifo_source, Decimal("40000")),
+            plugin._withdraw_from_source(fifo_source, Decimal("40000")),
+        ]
+        pro_rata_gains = [
+            plugin._withdraw_from_source(pro_rata_source, Decimal("40000")),
+            plugin._withdraw_from_source(pro_rata_source, Decimal("40000")),
+        ]
+
+        assert fifo_gains[0] == ZERO
+        assert fifo_gains[1] > ZERO
+        assert pro_rata_gains[0] > ZERO
+        assert pro_rata_gains[1] > ZERO
+        assert abs(pro_rata_gains[1] - pro_rata_gains[0]) < abs(
+            fifo_gains[1] - fifo_gains[0]
+        )
 
     def test_allow_negative_capital_continues_with_debt(self):
         """When negative capital is allowed, the simulation continues instead of stopping."""

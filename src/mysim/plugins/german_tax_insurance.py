@@ -35,10 +35,10 @@ class GermanTaxInsurancePlugin(Plugin):
         return 0
 
     def hooks(self) -> list[HookType]:
-        return [HookType.CALCULATE_TAX_AND_INSURANCE]
+        return [HookType.CALCULATE_TAX_AND_INSURANCE, HookType.RECONCILE_CASHFLOW]
 
     def depends_on(self) -> list[str]:
-        return ["pre_tax_summary"]
+        return ["pre_tax_summary", "reconcile_cashflow"]
 
     def execute(self, state: SimulationState, hook: HookType) -> SimulationState:
         # Process status change events
@@ -93,9 +93,15 @@ class GermanTaxInsurancePlugin(Plugin):
                 value=pv, label="Pflegeversicherung"
             )
 
-        # Add derivation trace if debug mode
-        if state.debug:
+            
+
+        # Add derivation trace if debug mode (income tax calculation)
+        if state.debug and hook == HookType.CALCULATE_TAX_AND_INSURANCE:
             state.traces.append(self._build_trace(state, taxable_income, income_tax))
+
+        # If running at reconcile hook, apply post-reconciliation adjustments
+        if hook == HookType.RECONCILE_CASHFLOW:
+            self._apply_post_reconciliation_adjustments(state, cfg)
 
         return state
 
@@ -184,6 +190,76 @@ class GermanTaxInsurancePlugin(Plugin):
         # 3. Apply fixed capital gains tax rate (typically 25%)
         tax = total_taxable_gains * cfg.fixed_capital_gains_tax_rate
         return tax.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    def _sum_realized_gains(self, state: SimulationState) -> Decimal:
+        """Sum realized capital gains entries in inflows."""
+        total = ZERO
+        for key, entry in state.inflows.items():
+            if key.startswith("realized_gain_"):
+                total += entry.value
+        return total
+
+    def _apply_post_reconciliation_adjustments(self, state: SimulationState, cfg: GermanPluginConfig) -> None:
+        """Compute additional deductions caused by realized gains created in reconciliation."""
+        realized_gain = self._sum_realized_gains(state)
+        if realized_gain <= ZERO:
+            return
+
+        total_income = sum((e.value for e in state.inflows.values()), ZERO)
+        prior_income = total_income - realized_gain
+
+        # Taxable before realized gain
+        prior_taxable = sum((e.value for e in state.inflows.values() if not e.is_tax_free), ZERO) - realized_gain
+        if prior_taxable < ZERO:
+            prior_taxable = ZERO
+
+        income_tax_before = self._calculate_progressive_income_tax(prior_taxable, cfg)
+        income_tax_after = self._calculate_progressive_income_tax(prior_taxable + realized_gain, cfg)
+        extra_tax = income_tax_after - income_tax_before
+        if extra_tax > ZERO:
+            state.deductions["capital_gains_tax"] = LedgerEntry(value=extra_tax, label="Kapitalertragssteuer")
+            extra_soli = self._calculate_soli(income_tax_after) - self._calculate_soli(income_tax_before)
+            if extra_soli > ZERO:
+                state.deductions["solidarity_surcharge_realized_gains"] = LedgerEntry(
+                    value=extra_soli, label="Solidaritätszuschlag auf Kapitalerträge"
+                )
+
+        extra_gkv = self._calculate_gkv_for_income(total_income, cfg) - self._calculate_gkv_for_income(prior_income, cfg)
+        if extra_gkv > ZERO:
+            state.deductions["gkv"] = LedgerEntry(
+                value=(state.deductions.get("gkv", LedgerEntry(ZERO, "Gesetzliche Krankenversicherung")).value + extra_gkv),
+                label="Gesetzliche Krankenversicherung",
+            )
+
+        extra_pv = self._calculate_pv_for_income(total_income, cfg) - self._calculate_pv_for_income(prior_income, cfg)
+        if extra_pv > ZERO:
+            state.deductions["pv"] = LedgerEntry(
+                value=(state.deductions.get("pv", LedgerEntry(ZERO, "Pflegeversicherung")).value + extra_pv),
+                label="Pflegeversicherung",
+            )
+
+        if state.debug:
+            reconcile_steps = [
+                {"step": "total_income", "value": str(total_income), "source": "inflow_plugins + realized_gains"},
+                {"step": "realized_gain", "value": str(realized_gain), "source": "reconcile_plugin"},
+                {"step": "prior_income", "value": str(prior_income), "source": "inflow_plugins"},
+                {"step": "prior_taxable", "value": str(prior_taxable), "source": "calculation"},
+                {"step": "income_tax_before", "value": str(income_tax_before), "source": "progressive_formula"},
+                {"step": "income_tax_after", "value": str(income_tax_after), "source": "progressive_formula"},
+                {"step": "extra_tax", "value": str(extra_tax), "source": "difference"},
+                {"step": "extra_gkv", "value": str(extra_gkv), "source": "gkv_delta"},
+                {"step": "extra_pv", "value": str(extra_pv), "source": "pv_delta"},
+            ]
+
+            state.traces.append(
+                {
+                    "year": state.year,
+                    "deduction_type": "post_reconcile",
+                    "steps": reconcile_steps,
+                    "deductions": {k: str(v.value) for k, v in state.deductions.items()},
+                    "result": str(extra_tax),
+                }
+            )
 
     def _progressive_formula(self, zvE: Decimal) -> Decimal:
         """
@@ -329,6 +405,60 @@ class GermanTaxInsurancePlugin(Plugin):
                     "value": str(-income_tax),
                     "source": "german_tax_plugin",
                 },
+                {
+                    "step": "gkv",
+                    "value": str(self._calculate_gkv(state, self._german_cfg)),
+                    "source": "german_tax_plugin",
+                },
+                {
+                    "step": "pv",
+                    "value": str(self._calculate_pv(state, self._german_cfg)),
+                    "source": "german_tax_plugin",
+                },
             ],
             "result": str(income_tax),
         }
+
+    def _calculate_gkv_for_income(self, income: Decimal, cfg: GermanPluginConfig) -> Decimal:
+        """Calculate GKV contributions for an arbitrary income amount (used in deltas)."""
+        if cfg.health_insurance_status == "privat_versichert":
+            return ZERO
+
+        bbg = cfg.gkv_beitragsbemessungsgrenze_annual
+        contribution_base = min(income, bbg)
+
+        # Apply minimum contribution base for voluntary insurance
+        if cfg.health_insurance_status == "freiwillig_versichert":
+            contribution_base = max(contribution_base, cfg.gkv_mindestbemessungsgrundlage_annual)
+
+        total_rate = cfg.gkv_contribution_rate + cfg.gkv_additional_contribution
+
+        if cfg.health_insurance_status == "pflichtversichert":
+            gkv = contribution_base * (total_rate / TWO)
+        else:
+            gkv = contribution_base * total_rate
+
+        return gkv.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    def _calculate_pv_for_income(self, income: Decimal, cfg: GermanPluginConfig) -> Decimal:
+        """Calculate PV contributions for an arbitrary income amount (used in deltas)."""
+        if cfg.health_insurance_status == "privat_versichert":
+            return ZERO
+
+        bbg = cfg.gkv_beitragsbemessungsgrenze_annual
+        contribution_base = min(income, bbg)
+
+        # Apply minimum contribution base for voluntary insurance
+        if cfg.health_insurance_status == "freiwillig_versichert":
+            contribution_base = max(contribution_base, cfg.gkv_mindestbemessungsgrundlage_annual)
+
+        pv_rate = cfg.pv_base_rate
+        if cfg.number_of_children == 0:
+            pv_rate += cfg.pv_childless_surcharge
+
+        if cfg.number_of_children >= 2:
+            discount = min(cfg.number_of_children - 1, 4) * Decimal("0.0025")
+            pv_rate -= discount
+
+        pv = contribution_base * pv_rate
+        return pv.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
