@@ -86,7 +86,8 @@ def _extract_simple_params(data: dict) -> dict[str, Any]:
     for key in ("income_tax_filing_status", "confession_has_church_tax",
                 "number_of_children", "grundfreibetrag", "sparer_pauschbetrag",
                 "health_insurance_status", "gkv_contribution_rate",
-                "gkv_additional_contribution", "gkv_beitragsbemessungsgrenze_annual"):
+                "gkv_additional_contribution", "gkv_beitragsbemessungsgrenze_annual",
+                "gkv_mindestbemessungsgrundlage_annual"):
         if key in german:
             simple[f"german_plugin_config.{key}"] = german[key]
 

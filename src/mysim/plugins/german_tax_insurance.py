@@ -253,6 +253,10 @@ class GermanTaxInsurancePlugin(Plugin):
         bbg = cfg.gkv_beitragsbemessungsgrenze_annual
         contribution_base = min(income, bbg)
 
+        # Apply minimum contribution base for voluntary insurance
+        if cfg.health_insurance_status == "freiwillig_versichert":
+            contribution_base = max(contribution_base, cfg.gkv_mindestbemessungsgrundlage_annual)
+
         # Total rate: base rate + additional contribution
         total_rate = cfg.gkv_contribution_rate + cfg.gkv_additional_contribution
 
@@ -277,6 +281,10 @@ class GermanTaxInsurancePlugin(Plugin):
         income = state.total_inflows
         bbg = cfg.gkv_beitragsbemessungsgrenze_annual
         contribution_base = min(income, bbg)
+
+        # Apply minimum contribution base for voluntary insurance
+        if cfg.health_insurance_status == "freiwillig_versichert":
+            contribution_base = max(contribution_base, cfg.gkv_mindestbemessungsgrundlage_annual)
 
         # Base PV rate
         pv_rate = cfg.pv_base_rate
