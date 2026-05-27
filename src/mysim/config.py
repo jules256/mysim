@@ -66,6 +66,7 @@ class GermanPluginConfig(BaseModel):
     gkv_contribution_rate: Decimal = Decimal("0.146")
     gkv_additional_contribution: Decimal = Decimal("0.017")
     gkv_beitragsbemessungsgrenze_annual: Decimal = Decimal("62100")
+    gkv_mindestbemessungsgrundlage_annual: Decimal = Decimal("14140")
     pv_base_rate: Decimal = Decimal("0.0340")
     pv_childless_surcharge: Decimal = Decimal("0.006")
 
