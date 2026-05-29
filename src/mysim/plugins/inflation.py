@@ -39,4 +39,10 @@ class InflationPlugin(Plugin):
                             str(event.parameters["inflation_rate"])
                         )
 
+        # Compound cumulative inflation factor (skip the first year)
+        if state.year > state.start_year:
+            state.cumulative_inflation_factor *= (
+                Decimal("1") + state.inflation_rate
+            )
+
         return state

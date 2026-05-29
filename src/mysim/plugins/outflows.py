@@ -28,12 +28,8 @@ class OutflowPlugin(Plugin):
     def execute(self, state: SimulationState, hook: HookType) -> SimulationState:
         trackers = self._config.generic_trackers
 
-        # Calculate years elapsed since simulation start
-        years_elapsed = state.year - state.start_year
-
-        # Inflation adjustment follows a consistent start-year logic
-        # years_elapsed = current_year - start_year
-        inflation_factor = (Decimal("1") + state.inflation_rate) ** years_elapsed
+        # Use the cumulative inflation factor computed by the inflation plugin
+        inflation_factor = state.cumulative_inflation_factor
 
         fixed_costs = trackers.fixed_costs_living * inflation_factor
         pocket_money = trackers.pocket_money * inflation_factor

@@ -18,6 +18,7 @@ class LedgerEntry:
     value: Decimal
     label: str  # German presentation label
     is_tax_free: bool = False
+    is_realized_gain: bool = False
 
 
 @dataclass
@@ -82,13 +83,16 @@ class SimulationState:
     # Capital withdrawal order (account keys in priority)
     capital_withdrawal_order: list[str] = field(default_factory=list)
 
+    # Cumulative inflation factor (compounded year over year)
+    cumulative_inflation_factor: Decimal = Decimal("1")
+
     # Debug mode flag
     debug: bool = False
 
     def compute_summaries(self) -> None:
         """Recompute summary totals from ledger maps."""
         self.total_inflows = sum(
-            (e.value for e in self.inflows.values()), ZERO
+            (e.value for e in self.inflows.values() if not e.is_realized_gain), ZERO
         )
         self.total_outflows = sum(
             (e.value for e in self.outflows.values()), ZERO

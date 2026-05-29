@@ -80,6 +80,7 @@ class ReconcilePlugin(Plugin):
             remaining -= withdrawal
 
             # Inject realized gain into inflows for tax calculation
+            # (marked as realized_gain so it's excluded from total_inflows reporting)
             gain_key = f"realized_gain_{account_key}"
             if gain_key in state.inflows:
                 state.inflows[gain_key].value += realized_gain
@@ -87,6 +88,7 @@ class ReconcilePlugin(Plugin):
                 state.inflows[gain_key] = LedgerEntry(
                     value=realized_gain,
                     label=f"Realisierter Gewinn ({source.label})",
+                    is_realized_gain=True,
                 )
 
             logger.debug(
